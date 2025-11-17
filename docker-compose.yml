@@ -1,0 +1,230 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: lastmile-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=lastmile
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - lastmile-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: lastmile-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - lastmile-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  station-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.station
+    image: lastmile/station-service:latest
+    container_name: lastmile-station-service
+    ports:
+      - "50051:50051"
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.user
+    image: lastmile/user-service:latest
+    container_name: lastmile-user-service
+    ports:
+      - "50052:50052"
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  driver-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.driver
+    image: lastmile/driver-service:latest
+    container_name: lastmile-driver-service
+    ports:
+      - "50053:50053"
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+      - STATION_SERVICE_HOST=station-service
+      - STATION_SERVICE_PORT=50051
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      station-service:
+        condition: service_started
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  rider-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.rider
+    image: lastmile/rider-service:latest
+    container_name: lastmile-rider-service
+    ports:
+      - "50054:50054"
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  location-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.location
+    image: lastmile/location-service:latest
+    container_name: lastmile-location-service
+    ports:
+      - "50055:50055"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  matching-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.matching
+    image: lastmile/matching-service:latest
+    container_name: lastmile-matching-service
+    ports:
+      - "50056:50056"
+    environment:
+      - DRIVER_SERVICE_HOST=driver-service
+      - DRIVER_SERVICE_PORT=50053
+      - TRIP_SERVICE_HOST=trip-service
+      - TRIP_SERVICE_PORT=50057
+    depends_on:
+      driver-service:
+        condition: service_started
+      trip-service:
+        condition: service_started
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  trip-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.trip
+    image: lastmile/trip-service:latest
+    container_name: lastmile-trip-service
+    ports:
+      - "50057:50057"
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.notification
+    image: lastmile/notification-service:latest
+    container_name: lastmile-notification-service
+    ports:
+      - "50058:50058"
+    depends_on:
+      - user-service
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  gateway:
+    image: envoyproxy/envoy:v1.31-latest
+    container_name: lastmile-gateway
+    ports:
+      - "8080:8080"     # API Gateway HTTP endpoint
+      - "9901:9901"     # Envoy admin
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml
+      - ./proto.pb:/etc/envoy/proto.pb
+    depends_on:
+      - station-service
+      - user-service
+      - driver-service
+      - rider-service
+      - location-service
+      - matching-service
+      - trip-service
+      - notification-service
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: lastmile/frontend:latest
+    container_name: lastmile-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_BASE_URL=http://localhost:8080
+    depends_on:
+      - gateway
+    networks:
+      - lastmile-network
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  lastmile-network:
+    driver: bridge

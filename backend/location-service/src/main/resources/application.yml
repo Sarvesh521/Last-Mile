@@ -1,0 +1,17 @@
+grpc:
+  server:
+    port: 50055
+
+spring:
+  application:
+    name: location-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

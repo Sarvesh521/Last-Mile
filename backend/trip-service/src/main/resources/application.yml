@@ -1,0 +1,18 @@
+grpc:
+  server:
+    port: 50057
+
+spring:
+  application:
+    name: trip-service
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_trips
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

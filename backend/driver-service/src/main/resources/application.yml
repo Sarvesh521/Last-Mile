@@ -1,0 +1,22 @@
+grpc:
+  server:
+    port: 50053
+  client:
+    station-service:
+      address: 'static://${STATION_SERVICE_HOST:localhost}:${STATION_SERVICE_PORT:50051}'
+      negotiationType: plaintext
+
+spring:
+  application:
+    name: driver-service
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_drivers
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

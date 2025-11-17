@@ -1,0 +1,21 @@
+grpc:
+  server:
+    port: 50052
+
+spring:
+  application:
+    name: user-service
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_users
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

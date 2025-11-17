@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package com.lastmile.driver;
+
+option java_multiple_files = true;
+option java_package = "com.lastmile.driver.proto";
+option java_outer_classname = "DriverProto";
+
+service DriverService {
+  rpc RegisterRoute(RegisterRouteRequest) returns (RegisterRouteResponse);
+  rpc UpdateLocation(UpdateLocationRequest) returns (UpdateLocationResponse);
+  rpc UpdatePickupStatus(UpdatePickupStatusRequest) returns (UpdatePickupStatusResponse);
+  rpc GetDriverInfo(GetDriverInfoRequest) returns (GetDriverInfoResponse);
+  rpc ListDrivers(ListDriversRequest) returns (ListDriversResponse);
+}
+
+message RegisterRouteRequest {
+  string driver_id = 1;
+  string origin_station = 2;
+  string destination = 3;
+  int32 available_seats = 4;
+  repeated string metro_stations = 5;
+}
+
+message RegisterRouteResponse {
+  string route_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateLocationRequest {
+  string driver_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+}
+
+message UpdateLocationResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UpdatePickupStatusRequest {
+  string driver_id = 1;
+  bool is_picking_up = 2;
+}
+
+message UpdatePickupStatusResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetDriverInfoRequest {
+  string driver_id = 1;
+}
+
+message GetDriverInfoResponse {
+  string driver_id = 1;
+  string origin_station = 2;
+  string destination = 3;
+  int32 available_seats = 4;
+  repeated string metro_stations = 5;
+  Location current_location = 6;
+  bool is_picking_up = 7;
+  bool success = 8;
+}
+
+message ListDriversRequest {
+}
+
+message ListDriversResponse {
+  repeated string driver_ids = 1;
+  bool success = 2;
+}
+
+message Location {
+  double latitude = 1;
+  double longitude = 2;
+  int64 timestamp = 3;
+}
+

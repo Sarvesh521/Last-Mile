@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package com.lastmile.rider;
+
+option java_multiple_files = true;
+option java_package = "com.lastmile.rider.proto";
+option java_outer_classname = "RiderProto";
+
+service RiderService {
+  rpc RegisterRideRequest(RegisterRideRequestRequest) returns (RegisterRideRequestResponse);
+  rpc GetRideStatus(GetRideStatusRequest) returns (GetRideStatusResponse);
+  rpc CancelRideRequest(CancelRideRequestRequest) returns (CancelRideRequestResponse);
+}
+
+message RegisterRideRequestRequest {
+  string rider_id = 1;
+  string metro_station = 2;
+  string destination = 3;
+  int64 arrival_time = 4;
+}
+
+message RegisterRideRequestResponse {
+  string ride_request_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetRideStatusRequest {
+  string ride_request_id = 1;
+}
+
+message GetRideStatusResponse {
+  string ride_request_id = 1;
+  RideStatus status = 2;
+  string driver_id = 3;
+  string trip_id = 4;
+  bool success = 5;
+}
+
+message CancelRideRequestRequest {
+  string ride_request_id = 1;
+}
+
+message CancelRideRequestResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+enum RideStatus {
+  PENDING = 0;
+  MATCHED = 1;
+  IN_PROGRESS = 2;
+  COMPLETED = 3;
+  CANCELLED = 4;
+}
+

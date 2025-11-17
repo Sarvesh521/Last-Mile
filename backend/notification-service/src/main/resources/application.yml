@@ -1,0 +1,13 @@
+grpc:
+  server:
+    port: 50058
+
+spring:
+  application:
+    name: notification-service
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

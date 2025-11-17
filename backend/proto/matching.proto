@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package com.lastmile.matching;
+
+option java_multiple_files = true;
+option java_package = "com.lastmile.matching.proto";
+option java_outer_classname = "MatchingProto";
+
+service MatchingService {
+  rpc MatchRiderWithDriver(MatchRiderWithDriverRequest) returns (MatchRiderWithDriverResponse);
+  rpc GetMatchStatus(GetMatchStatusRequest) returns (GetMatchStatusResponse);
+}
+
+message MatchRiderWithDriverRequest {
+  string ride_request_id = 1;
+  string rider_id = 2;
+  string metro_station = 3;
+  string destination = 4;
+  int64 arrival_time = 5;
+}
+
+message MatchRiderWithDriverResponse {
+  string match_id = 1;
+  string driver_id = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message GetMatchStatusRequest {
+  string match_id = 1;
+}
+
+message GetMatchStatusResponse {
+  string match_id = 1;
+  string driver_id = 2;
+  string rider_id = 3;
+  MatchStatus status = 4;
+  bool success = 5;
+}
+
+enum MatchStatus {
+  PENDING = 0;
+  MATCHED = 1;
+  CONFIRMED = 2;
+  CANCELLED = 3;
+}
+

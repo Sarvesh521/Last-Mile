@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package com.lastmile.station;
+
+option java_multiple_files = true;
+option java_package = "com.lastmile.station.proto";
+option java_outer_classname = "StationProto";
+
+service StationService {
+  rpc GetStationsAlongRoute(GetStationsAlongRouteRequest) returns (GetStationsAlongRouteResponse);
+  rpc GetStationInfo(GetStationInfoRequest) returns (GetStationInfoResponse);
+  rpc GetAllStations(GetAllStationsRequest) returns (GetAllStationsResponse);
+}
+
+message GetStationsAlongRouteRequest {
+  string origin = 1;
+  string destination = 2;
+}
+
+message GetStationsAlongRouteResponse {
+  repeated Station stations = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetStationInfoRequest {
+  string station_id = 1;
+}
+
+message GetStationInfoResponse {
+  Station station = 1;
+  bool success = 2;
+}
+
+message GetAllStationsRequest {
+}
+
+message GetAllStationsResponse {
+  repeated Station stations = 1;
+  bool success = 2;
+}
+
+message Station {
+  string station_id = 1;
+  string name = 2;
+  double latitude = 3;
+  double longitude = 4;
+  string line = 5;
+  int32 order = 6;
+}
+

@@ -1,0 +1,18 @@
+grpc:
+  server:
+    port: 50054
+
+spring:
+  application:
+    name: rider-service
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_riders
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

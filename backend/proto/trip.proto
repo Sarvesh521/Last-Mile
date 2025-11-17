@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package com.lastmile.trip;
+
+option java_multiple_files = true;
+option java_package = "com.lastmile.trip.proto";
+option java_outer_classname = "TripProto";
+
+service TripService {
+  rpc CreateTrip(CreateTripRequest) returns (CreateTripResponse);
+  rpc UpdateTripStatus(UpdateTripStatusRequest) returns (UpdateTripStatusResponse);
+  rpc GetTripInfo(GetTripInfoRequest) returns (GetTripInfoResponse);
+  rpc RecordPickup(RecordPickupRequest) returns (RecordPickupResponse);
+  rpc RecordDropoff(RecordDropoffRequest) returns (RecordDropoffResponse);
+}
+
+message CreateTripRequest {
+  string driver_id = 1;
+  string rider_id = 2;
+  string origin_station = 3;
+  string destination = 4;
+  string match_id = 5;
+}
+
+message CreateTripResponse {
+  string trip_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateTripStatusRequest {
+  string trip_id = 1;
+  TripStatus status = 2;
+}
+
+message UpdateTripStatusResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetTripInfoRequest {
+  string trip_id = 1;
+}
+
+message GetTripInfoResponse {
+  string trip_id = 1;
+  string driver_id = 2;
+  string rider_id = 3;
+  string origin_station = 4;
+  string destination = 5;
+  TripStatus status = 6;
+  int64 created_at = 7;
+  int64 pickup_time = 8;
+  int64 dropoff_time = 9;
+  bool success = 10;
+}
+
+message RecordPickupRequest {
+  string trip_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+}
+
+message RecordPickupResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RecordDropoffRequest {
+  string trip_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+}
+
+message RecordDropoffResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+enum TripStatus {
+  SCHEDULED = 0;
+  ACTIVE = 1;
+  COMPLETED = 2;
+  CANCELLED = 3;
+}
+

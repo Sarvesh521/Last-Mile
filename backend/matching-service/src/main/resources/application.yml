@@ -1,0 +1,20 @@
+grpc:
+  server:
+    port: 50056
+  client:
+    driver-service:
+      address: 'static://${DRIVER_SERVICE_HOST:localhost}:${DRIVER_SERVICE_PORT:50053}'
+      negotiationType: plaintext
+    trip-service:
+      address: 'static://${TRIP_SERVICE_HOST:localhost}:${TRIP_SERVICE_PORT:50057}'
+      negotiationType: plaintext
+
+spring:
+  application:
+    name: matching-service
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

@@ -1,0 +1,18 @@
+grpc:
+  server:
+    port: 50051
+
+spring:
+  application:
+    name: station-service
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_stations
+
+logging:
+  level:
+    root: INFO
+    com.lastmile: DEBUG
+

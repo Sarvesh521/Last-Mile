@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rider-service
+  labels:
+    app: rider-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50054
+    targetPort: 50054
+    protocol: TCP
+  selector:
+    app: rider-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rider-service
+  labels:
+    app: rider-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rider-service
+  template:
+    metadata:
+      labels:
+        app: rider-service
+    spec:
+      containers:
+      - name: rider-service
+        image: lastmile/rider-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50054
+        env:
+        - name: MONGODB_HOST
+          value: "mongodb"
+        - name: MONGODB_PORT
+          value: "27017"
+
