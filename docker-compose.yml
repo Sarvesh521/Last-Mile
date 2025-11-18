@@ -209,7 +209,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    image: lastmile/frontend:latest
+    image: lastmile/new-frontend:latest
     container_name: lastmile-frontend
     ports:
       - "3000:80"
