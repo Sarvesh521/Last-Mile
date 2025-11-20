@@ -45,6 +45,17 @@ export function isAuthenticated(): boolean {
   return age < MAX_AGE_MS;
 }
 
+export function hasValidSession(): boolean {
+  return !!getUser() && isAuthenticated();
+}
+
+export function logoutWithReason(reason: string = 'expired') {
+  clearSession();
+  if (typeof window !== 'undefined') {
+    window.location.href = `/login?reason=${encodeURIComponent(reason)}`;
+  }
+}
+
 // Lightweight name resolution used both by register and login flows.
 export function resolveName(profileName?: string, fallbackFormName?: string): string {
   if (profileName && profileName.trim()) return profileName.trim();

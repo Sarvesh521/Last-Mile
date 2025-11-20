@@ -18,6 +18,31 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Global response interceptor to handle unauthorized (expired or invalid token)
+api.interceptors.response.use(
+  (response: any) => response,
+  (error: any) => {
+    const status = error?.response?.status;
+    if (status === 401) {
+      // Clear session data
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('auth_ts');
+      // Store last path for redirect after login
+      try { localStorage.setItem('last_path', window.location.pathname); } catch {}
+      // Redirect to login with reason query param so UI can display message
+      if (typeof window !== 'undefined') {
+        const current = window.location.pathname;
+        // Avoid redirect loop if already on login
+        if (!current.includes('/login')) {
+          window.location.href = '/login?reason=expired';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export interface RegisterPayload {
   email: string;
   password: string;

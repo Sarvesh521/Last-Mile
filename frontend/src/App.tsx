@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { hasValidSession, logoutWithReason } from './lib/auth';
+import { AuthGuard } from './components/AuthGuard';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
 import { DriverDashboard } from './components/DriverDashboard';
@@ -22,6 +24,18 @@ export default function App() {
         localStorage.removeItem('user');
       }
     }
+    // Immediate validity check
+    if (!hasValidSession()) {
+      localStorage.removeItem('user');
+      localStorage.removeItem('auth_token');
+    }
+    // Periodic idle/expiry check every 60s
+    const id = setInterval(() => {
+      if (!hasValidSession() && user) {
+        logoutWithReason('expired');
+      }
+    }, 60000);
+    return () => clearInterval(id);
   }, []);
 
   const handleLogin = (userData: any) => {
@@ -66,14 +80,16 @@ export default function App() {
 
   // Show appropriate dashboard based on user role
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar user={user} onLogout={handleLogout} />
-      {user.role === 'driver' ? (
-        <DriverDashboard user={user} />
-      ) : (
-        <RiderDashboard user={user} />
-      )}
-      <Toaster position="top-right" richColors />
-    </div>
+    <AuthGuard>
+      <div className="min-h-screen bg-gray-50">
+        <Navbar user={user} onLogout={handleLogout} />
+        {user.role === 'driver' ? (
+          <DriverDashboard user={user} />
+        ) : (
+          <RiderDashboard user={user} />
+        )}
+        <Toaster position="top-right" richColors />
+      </div>
+    </AuthGuard>
   );
 }

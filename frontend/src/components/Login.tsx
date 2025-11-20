@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -18,6 +18,22 @@ export function Login({ onLogin, onSwitchToRegister }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  // Show reason message if redirected due to expiration
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get('reason');
+    if (reason === 'expired') {
+      setInfoMessage('Your session expired. Please sign in again.');
+    } else if (reason === 'unauthorized') {
+      setInfoMessage('Please sign in to continue.');
+    }
+    // Show toast instead of inline (keep inline fallback disabled)
+    if (infoMessage) {
+      toast.info(infoMessage);
+    }
+  }, [infoMessage]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,6 +100,7 @@ export function Login({ onLogin, onSwitchToRegister }: LoginProps) {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Inline message removed: toast used instead */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
