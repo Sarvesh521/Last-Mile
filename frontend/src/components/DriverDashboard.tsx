@@ -5,22 +5,33 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock, TrendingUp } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
-import { driverApi, locationApi } from '../lib/api';
-import { MapView } from './MapView';
+import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock } from 'lucide-react';
+import { toast } from 'sonner';
+import { MapView, PlaceSearchBox } from './MapView'; 
 import { RatingDialog } from './RatingDialog';
 import { ProfilePictureUpload } from './ProfilePictureUpload';
-import { LocationSearch } from './LocationSearch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { useLoadScript } from '@react-google-maps/api';
+
+// Define libraries outside component to prevent re-renders
+const libraries: ("places")[] = ["places"];
 
 interface DriverDashboardProps {
   user: any;
 }
 
 export function DriverDashboard({ user }: DriverDashboardProps) {
+  // Load Google Maps Script at the top level
+  const { isLoaded, loadError } = useLoadScript({
+    googleMapsApiKey: import.meta.env.VITE_APP_GOOGLE_MAPS_API_KEY || "",
+    libraries,
+  });
+
   const [activeRoute, setActiveRoute] = useState<any>(null);
-  const [currentLocation, setCurrentLocation] = useState({ latitude: 28.6139, longitude: 77.2090 });
+  
+  // FIX: Changed state to use 'lat' and 'lng' to match Google Maps requirements
+  const [currentLocation, setCurrentLocation] = useState({ lat: 28.6139, lng: 77.2090 });
+  
   const [trips, setTrips] = useState<any[]>([]);
   const [rideHistory, setRideHistory] = useState<any[]>([]);
   const [showRouteDialog, setShowRouteDialog] = useState(false);
@@ -37,7 +48,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
   const [availableSeats, setAvailableSeats] = useState(4);
 
   useEffect(() => {
-    // Load mock trips with rider ratings
+    // Load mock trips
     const mockTrips = [
       {
         id: 't1',
@@ -84,33 +95,6 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
         rating: 4,
         duration: '20 min',
       },
-      {
-        id: 'h3',
-        date: '2024-11-17',
-        riderName: 'David Lee',
-        destination: 'Green Park',
-        fare: 100,
-        rating: 5,
-        duration: '15 min',
-      },
-      {
-        id: 'h4',
-        date: '2024-11-17',
-        riderName: 'Anita Patel',
-        destination: 'Lajpat Nagar',
-        fare: 160,
-        rating: 4,
-        duration: '22 min',
-      },
-      {
-        id: 'h5',
-        date: '2024-11-16',
-        riderName: 'Raj Malhotra',
-        destination: 'Defence Colony',
-        fare: 130,
-        rating: 5,
-        duration: '18 min',
-      },
     ];
     setRideHistory(mockHistory);
 
@@ -124,17 +108,17 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       setProfilePicture(savedPicture);
     }
 
-    // Get current location from browser (mock for demo)
+    // Get current location from browser
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          // FIX: Map browser coordinates to lat/lng
           setCurrentLocation({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
           });
         },
         () => {
-          // Use default location if geolocation fails
           toast.info('Using default location. Enable location services for accurate positioning.');
         }
       );
@@ -152,7 +136,6 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     try {
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       
-      // In production, call driverApi.registerRoute
       const route = {
         id: 'route_' + Date.now(),
         driverId: user.id,
@@ -167,7 +150,6 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       setShowRouteDialog(false);
       toast.success('Route registered successfully! Starting location updates...');
 
-      // Start location updates
       startLocationUpdates();
     } catch (error) {
       toast.error('Failed to register route');
@@ -180,21 +162,18 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     }
 
     const interval = setInterval(() => {
-      // Simulate location movement towards destination
+      // FIX: Update using lat/lng logic
       setCurrentLocation(prev => ({
-        latitude: prev.latitude + (Math.random() - 0.5) * 0.001,
-        longitude: prev.longitude + (Math.random() - 0.5) * 0.001,
+        lat: prev.lat + (Math.random() - 0.5) * 0.001,
+        lng: prev.lng + (Math.random() - 0.5) * 0.001,
       }));
-
-      // In production, call locationApi.updateLocation
-    }, 10000); // Update every 10 seconds
+    }, 10000); 
 
     setLocationUpdateInterval(interval);
   };
 
   const handlePickup = async (tripId: string) => {
     try {
-      // In production, call tripApi.recordPickup
       setTrips(prev => prev.map(trip =>
         trip.id === tripId ? { ...trip, status: 'active' } : trip
       ));
@@ -209,12 +188,10 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     if (!trip) return;
 
     try {
-      // In production, call tripApi.recordDropoff
       setTrips(prev => prev.map(t =>
         t.id === tripId ? { ...t, status: 'completed' } : t
       ));
       
-      // Add to history
       setRideHistory(prev => [{
         id: 'h_' + Date.now(),
         date: new Date().toISOString().split('T')[0],
@@ -229,7 +206,6 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       
       toast.success('Drop-off confirmed! Please rate your rider.');
       
-      // Open rating dialog
       setSelectedRiderForRating(trip);
       setRatingDialogOpen(true);
     } catch (error) {
@@ -239,7 +215,6 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
   const handleRateRider = (rating: number, feedback: string) => {
     toast.success(`Thank you for rating ${selectedRiderForRating?.riderName}!`);
-    // In production, send rating to backend
   };
 
   const handleProfilePictureUpload = (imageUrl: string) => {
@@ -259,6 +234,8 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       .filter(ride => ride.date === yesterday)
       .reduce((sum, ride) => sum + ride.fare, 0);
   };
+
+  if (loadError) return <div>Error loading maps configuration.</div>;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -355,7 +332,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                         Start Route
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="sm:max-w-[425px]">
                       <DialogHeader>
                         <DialogTitle>Start New Route</DialogTitle>
                         <DialogDescription>Set your destination and available seats</DialogDescription>
@@ -364,22 +341,29 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
                           <p className="text-blue-900 mb-1">📍 Current Location</p>
                           <p className="text-blue-700 text-xs">
-                            {currentLocation.latitude.toFixed(4)}, {currentLocation.longitude.toFixed(4)}
+                            {/* FIX: Display lat/lng */}
+                            {currentLocation.lat?.toFixed(4)}, {currentLocation.lng?.toFixed(4)}
                           </p>
                           <p className="text-blue-600 text-xs mt-1">
                             Departure: {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
 
-                        <LocationSearch
-                          value={destination}
-                          onChange={(location, coords) => {
-                            setDestination(location);
-                            setDestinationCoords(coords);
-                          }}
-                          label="Target Destination"
-                          placeholder="Search for destination..."
-                        />
+                        {/* Google Places Autocomplete Integration */}
+                        <div className="space-y-2">
+                          <Label htmlFor="destination">Target Destination</Label>
+                          {isLoaded ? (
+                            <PlaceSearchBox
+                              placeholder="Search for destination..."
+                              onPlaceSelect={(place) => {
+                                setDestination(place.address);
+                                setDestinationCoords(place.coords);
+                              }}
+                            />
+                          ) : (
+                            <Input disabled placeholder="Loading maps..." />
+                          )}
+                        </div>
 
                         <div className="space-y-2">
                           <Label htmlFor="seats">Available Seats</Label>
@@ -402,6 +386,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
               </CardHeader>
               <CardContent>
                 <MapView
+                  isLoaded={isLoaded}
                   currentLocation={currentLocation}
                   destination={activeRoute ? { ...destinationCoords, name: destination } : undefined}
                   showRoute={!!activeRoute}
