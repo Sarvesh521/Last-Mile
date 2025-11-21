@@ -1,5 +1,5 @@
-// Simple token-based auth helpers (no complex refresh logic)
-// Token is opaque UUID issued by backend and stored in Redis for ~1 hour.
+// Simple token-based auth helpers.
+// Backend enforces token validity & expiry via Redis; frontend no longer tracks time.
 
 export interface SessionUser {
   id: string;
@@ -11,8 +11,7 @@ export interface SessionUser {
 
 const USER_KEY = 'user';
 const TOKEN_KEY = 'auth_token';
-const TS_KEY = 'auth_ts';
-const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour, mirrors backend TTL
+// Timestamp / age tracking removed; backend is source of truth.
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -27,32 +26,25 @@ export function getUser(): SessionUser | null {
 export function setSession(user: SessionUser, token?: string) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
-  localStorage.setItem(TS_KEY, Date.now().toString());
 }
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
-  localStorage.removeItem(TS_KEY);
 }
 
 export function isAuthenticated(): boolean {
-  const token = getToken();
-  if (!token) return false;
-  const tsRaw = localStorage.getItem(TS_KEY);
-  if (!tsRaw) return true; // treat as valid if timestamp missing
-  const age = Date.now() - parseInt(tsRaw, 10);
-  return age < MAX_AGE_MS;
+  return !!getToken();
 }
 
 export function hasValidSession(): boolean {
   return !!getUser() && isAuthenticated();
 }
 
-export function logoutWithReason(reason: string = 'expired') {
+export function logout() {
   clearSession();
   if (typeof window !== 'undefined') {
-    window.location.href = `/login?reason=${encodeURIComponent(reason)}`;
+    window.location.href = '/login';
   }
 }
 

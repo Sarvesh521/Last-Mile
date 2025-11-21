@@ -225,7 +225,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       toast.success('Route registered successfully! Starting location updates...');
 
       startLocationUpdates();
-    } catch (error) {
+    } catch (error: any) {
       toast.error('Failed to register route');
     }
   };

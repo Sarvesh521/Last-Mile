@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { hasValidSession, logoutWithReason } from './lib/auth';
-import { AuthGuard } from './components/AuthGuard';
+import { logout } from './lib/auth';
+import { userApi } from './lib/api';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
 import { DriverDashboard } from './components/DriverDashboard';
@@ -15,27 +15,10 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
 
   useEffect(() => {
-    // Check for existing session
     const savedUser = localStorage.getItem('user');
     if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (error) {
-        localStorage.removeItem('user');
-      }
+      try { setUser(JSON.parse(savedUser)); } catch { localStorage.removeItem('user'); }
     }
-    // Immediate validity check
-    if (!hasValidSession()) {
-      localStorage.removeItem('user');
-      localStorage.removeItem('auth_token');
-    }
-    // Periodic idle/expiry check every 60s
-    const id = setInterval(() => {
-      if (!hasValidSession() && user) {
-        logoutWithReason('expired');
-      }
-    }, 60000);
-    return () => clearInterval(id);
   }, []);
 
   const handleLogin = (userData: any) => {
@@ -46,11 +29,18 @@ export default function App() {
     setUser(userData);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Attempt server-side invalidation before clearing local session.
+    try {
+      await userApi.logout();
+    } catch {
+      // Ignore errors; proceed with local logout.
+    }
     localStorage.removeItem('user');
     localStorage.removeItem('auth_token');
     setUser(null);
     setCurrentPage('login');
+    logout();
   };
 
   // Show login/register pages
@@ -80,16 +70,14 @@ export default function App() {
 
   // Show appropriate dashboard based on user role
   return (
-    <AuthGuard>
-      <div className="min-h-screen bg-gray-50">
-        <Navbar user={user} onLogout={handleLogout} />
-        {user.role === 'driver' ? (
-          <DriverDashboard user={user} />
-        ) : (
-          <RiderDashboard user={user} />
-        )}
-        <Toaster position="top-right" richColors />
-      </div>
-    </AuthGuard>
+    <div className="min-h-screen bg-gray-50">
+      <Navbar user={user} onLogout={handleLogout} />
+      {user.role === 'driver' ? (
+        <DriverDashboard user={user} />
+      ) : (
+        <RiderDashboard user={user} />
+      )}
+      <Toaster position="top-right" richColors />
+    </div>
   );
 }

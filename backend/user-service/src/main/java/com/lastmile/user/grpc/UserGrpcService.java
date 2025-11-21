@@ -20,6 +20,7 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
     
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
+
     
     @Override
     public void registerUser(RegisterUserRequest request,
@@ -122,6 +123,27 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
         }
         
         responseObserver.onNext(responseBuilder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void logoutUser(LogoutUserRequest request, StreamObserver<LogoutUserResponse> responseObserver) {
+        LogoutUserResponse.Builder builder = LogoutUserResponse.newBuilder();
+        try {
+            // Retrieve auth token from static key set by AuthInterceptor.
+            String token = AuthInterceptor.AUTH_TOKEN_KEY.get();
+            if (token == null) {
+                builder.setSuccess(false).setMessage("No token in context");
+            } else {
+                String redisKey = "token:" + token;
+                String existing = redisTemplate.opsForValue().get(redisKey);
+                Boolean deleted = redisTemplate.delete(redisKey);
+                builder.setSuccess(true).setMessage(deleted != null && deleted ? "Logged out" : "Token already invalidated");
+            }
+        } catch (Exception e) {
+            builder.setSuccess(false).setMessage(e.getMessage());
+        }
+        responseObserver.onNext(builder.build());
         responseObserver.onCompleted();
     }
     

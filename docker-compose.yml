@@ -42,6 +42,8 @@ services:
     environment:
       - MONGODB_HOST=mongodb
       - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mongodb:
         condition: service_healthy
@@ -84,6 +86,8 @@ services:
       - MONGODB_PORT=27017
       - STATION_SERVICE_HOST=station-service
       - STATION_SERVICE_PORT=50051
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mongodb:
         condition: service_healthy
@@ -104,6 +108,8 @@ services:
     environment:
       - MONGODB_HOST=mongodb
       - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mongodb:
         condition: service_healthy
@@ -142,6 +148,8 @@ services:
       - DRIVER_SERVICE_PORT=50053
       - TRIP_SERVICE_HOST=trip-service
       - TRIP_SERVICE_PORT=50057
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       driver-service:
         condition: service_started
@@ -162,6 +170,8 @@ services:
     environment:
       - MONGODB_HOST=mongodb
       - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mongodb:
         condition: service_healthy
@@ -177,6 +187,9 @@ services:
     container_name: lastmile-notification-service
     ports:
       - "50058:50058"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       - user-service
     networks:

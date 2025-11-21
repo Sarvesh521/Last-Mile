@@ -202,7 +202,6 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
     } catch (error: any) {
       const serverMsg = error?.response?.data?.message || error?.message;
-      // Provide extra debug when missing ID
       if (serverMsg?.includes('No ride_request_id')) {
         console.error('Ride request failure details', error?.response?.data || error);
       }
@@ -261,7 +260,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         setInRide(false);
       }
       toast.success('Ride cancelled');
-    } catch (error) {
+    } catch (error: any) {
       toast.error('Failed to cancel ride');
     }
   };

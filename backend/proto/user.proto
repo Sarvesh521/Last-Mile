@@ -4,10 +4,10 @@ package com.lastmile.user.proto;
 
 
 import "google/api/annotations.proto";
-import "google/api/http.proto";          // <--- REQUIRED for envoy transcoder
-import "google/protobuf/empty.proto";    // <--- optional but recommended
+import "google/api/http.proto";          // Provides google.api.http annotations to map gRPC methods to HTTP REST endpoints
+import "google/protobuf/empty.proto";   
 
-option java_multiple_files = true;
+option java_multiple_files = true; //generator emits one class per message/service/enum
 option java_package = "com.lastmile.user.proto";
 option java_outer_classname = "UserProto";
 
@@ -29,6 +29,14 @@ service UserService {
   rpc GetUserProfile(GetUserProfileRequest) returns (GetUserProfileResponse) {
     option (google.api.http) = {
       get: "/user/profile/{user_id}"
+    };
+  }
+
+  // Invalidate current token (requires Authorization header); returns success only.
+  rpc LogoutUser(LogoutUserRequest) returns (LogoutUserResponse) {
+    option (google.api.http) = {
+      post: "/user/logout"
+      body: "*"
     };
   }
 }
@@ -79,6 +87,14 @@ message UpdateUserProfileRequest {
 }
 
 message UpdateUserProfileResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Empty request; token taken from Authorization header via interceptor context.
+message LogoutUserRequest {}
+
+message LogoutUserResponse {
   bool success = 1;
   string message = 2;
 }

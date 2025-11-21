@@ -20,20 +20,7 @@ export function Login({ onLogin, onSwitchToRegister }: LoginProps) {
   const [loading, setLoading] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Show reason message if redirected due to expiration
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const reason = params.get('reason');
-    if (reason === 'expired') {
-      setInfoMessage('Your session expired. Please sign in again.');
-    } else if (reason === 'unauthorized') {
-      setInfoMessage('Please sign in to continue.');
-    }
-    // Show toast instead of inline (keep inline fallback disabled)
-    if (infoMessage) {
-      toast.info(infoMessage);
-    }
-  }, [infoMessage]);
+  // Removed reason-based messaging; backend authoritative.
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +33,7 @@ export function Login({ onLogin, onSwitchToRegister }: LoginProps) {
       }
       // Store token early for profile fetch
       if (data.token) {
-        localStorage.setItem('auth_token', data.token); // kept for interceptor compatibility
+        localStorage.setItem('auth_token', data.token);
       }
       // Fetch profile for role & name details
       const userId = data.user_id || data.userId; // handle both snake_case & camelCase
