@@ -47,6 +47,11 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface LatLng {
+  latitude: number;
+  longitude: number;
+}
+
 export const userApi = {
   register: (data: RegisterPayload) => api.post('/user/register', data),
   login: (data: LoginPayload) => api.post('/user/login', data),
@@ -55,8 +60,8 @@ export const userApi = {
 };
 
 export const stationApi = {
-  getStationsAlongRoute: (origin: string, destination: string) =>
-    api.post('/station/route', { origin, destination }),
+  getStationsAlongRoute: (origin: string, destination: string, routePoints: LatLng[]) =>
+    api.post('/station/route', { origin, destination, route_points: routePoints}),
   getAllStations: () => api.get('/station'),
 };
 

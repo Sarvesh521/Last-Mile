@@ -4,11 +4,22 @@ import {
   GoogleMap,
   Marker,
   DirectionsRenderer,
+  InfoWindow,
 } from "@react-google-maps/api";
+import { stationApi } from "../lib/api";
 
 const containerStyle = { width: "100%", height: "100%" };
 
 type LatLng = { lat: number; lng: number };
+
+// Interface for the Station object coming from Backend
+interface Station {
+  station_id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  line?: string;
+}
 
 // Helper to check if coordinates are valid numbers
 const isValidLatLng = (coords: any): coords is LatLng => {
@@ -22,7 +33,7 @@ const isValidLatLng = (coords: any): coords is LatLng => {
 };
 
 // ----------------------------------------------------------------------
-// Helper Component: Uses the Modern Google Places Web Component
+// Helper Component: PlaceSearchBox (No changes here)
 // ----------------------------------------------------------------------
 export const PlaceSearchBox = ({
   placeholder,
@@ -32,82 +43,47 @@ export const PlaceSearchBox = ({
   onPlaceSelect: (place: { coords: LatLng; address: string }) => void;
 }) => {
   const inputContainerRef = useRef<HTMLDivElement>(null);
-  // Keep track if we've already appended the element to prevent duplicates
   const autocompleteRef = useRef<any>(null);
 
   useEffect(() => {
     if (!inputContainerRef.current || !window.google) return;
-
     let active = true;
 
     const init = async () => {
-      // Import the NEW Places Library
-      // @ts-ignore: Types might be missing for beta API
+      // @ts-ignore
       const { PlaceAutocompleteElement } = (await google.maps.importLibrary(
         "places"
       )) as any;
 
       if (!active) return;
 
-      // Only create the element once
       if (!autocompleteRef.current) {
         const autocomplete = new PlaceAutocompleteElement();
         autocomplete.placeholder = placeholder;
         autocompleteRef.current = autocomplete;
 
-        // --- STYLING FIX ---
-        // Apply classes for width/border
         autocomplete.classList.add(
-          "w-full",
-          "h-10",
-          "rounded-md",
-          "border",
-          "border-input",
-          "bg-white", // Force white background on the input itself
-          "text-black" // Force black text on the input itself
+          "w-full", "h-10", "rounded-md", "border", "border-input", "bg-white", "text-black"
         );
         
-        // Apply inline styles to the Custom Element to force CSS Variables
-        // This fixes the black dropdown issue by overriding Shadow DOM variables
         Object.assign(autocomplete.style, {
-            width: '100%',
-            height: '40px',
-            backgroundColor: '#ffffff',
-            color: '#000000',
-            // Google Maps Web Component Variables
-            '--gmp-px-color-surface': '#ffffff', // Dropdown background
-            '--gmp-px-color-text-primary': '#000000', // Main text
-            '--gmp-px-color-text-secondary': '#4b5563', // Secondary text
-            '--gmp-px-color-text-suggestion-primary': '#000000',
-            '--gmp-px-color-text-suggestion-secondary': '#4b5563',
-            '--gmp-px-color-separator': '#e5e7eb',
+            width: '100%', height: '40px', backgroundColor: '#ffffff', color: '#000000',
+            '--gmp-px-color-surface': '#ffffff', '--gmp-px-color-text-primary': '#000000',
+            '--gmp-px-color-text-secondary': '#4b5563',
         });
 
-        // --- SELECTION LOGIC FIX ---
-        // --- SELECTION LOGIC FIX ---
-      autocomplete.addEventListener("gmp-select", async ({ placePrediction }) => {
+      autocomplete.addEventListener("gmp-select", async ({ placePrediction }: any) => {
         const place = placePrediction.toPlace();
-        if (!place) {
-          console.warn("No place selected or event data is missing.");
-          return;
-        }
+        if (!place) return;
 
         try {
-          // Fetch fields explicitly in the new API
-          await place.fetchFields({
-            fields: ["displayName", "formattedAddress", "location"],
-          });
-
+          await place.fetchFields({ fields: ["displayName", "formattedAddress", "location"] });
           const location = place.location;
           let name = place.displayName;
-          if (typeof name === "object" && name !== null && "text" in name) {
-            name = name.text;
-          }
-
+          if (typeof name === "object" && name !== null && "text" in name) name = name.text;
           const address = place.formattedAddress || name || "Selected Location";
 
           if (location) {
-            // Trigger parent update immediately
             onPlaceSelect({
               coords: { lat: location.lat(), lng: location.lng() },
               address: address,
@@ -117,18 +93,12 @@ export const PlaceSearchBox = ({
           console.error("Error fetching place details:", err);
         }
       });
-
-        // Append to the DOM
         inputContainerRef.current.appendChild(autocomplete);
       }
     };
-
     init();
-
-    return () => {
-      active = false;
-    };
-  }, [placeholder]); // Removed onPlaceSelect from deps to avoid re-init
+    return () => { active = false; };
+  }, [placeholder]);
 
   return <div ref={inputContainerRef} className="w-full text-black" />;
 };
@@ -137,8 +107,8 @@ export const PlaceSearchBox = ({
 // Main Component
 // ----------------------------------------------------------------------
 interface MapViewProps {
-  isLoaded: boolean; // Received from parent who loads the script
-  currentLocation?: LatLng | null; // Optional override
+  isLoaded: boolean;
+  currentLocation?: LatLng | null;
   destination?: { lat: number; lng: number; name: string };
   showRoute?: boolean;
 }
@@ -149,33 +119,27 @@ export function MapView({
   destination,
   showRoute,
 }: MapViewProps) {
-  const [mapCenter, setMapCenter] = useState<LatLng>({
-    lat: 28.6139,
-    lng: 77.209,
-  });
-  const [internalCurrentLocation, setInternalCurrentLocation] =
-    useState<LatLng | null>(null);
+  const [mapCenter, setMapCenter] = useState<LatLng>({ lat: 28.6139, lng: 77.209 });
+  const [internalCurrentLocation, setInternalCurrentLocation] = useState<LatLng | null>(null);
 
-  // Use prop location if provided and valid, otherwise use internal state
   const currentLocation = isValidLatLng(propCurrentLocation)
     ? propCurrentLocation
     : internalCurrentLocation;
 
-  const [originPlace, setOriginPlace] = useState<{
-    coords?: LatLng;
-    address?: string;
-  } | null>(null);
-  const [destPlace, setDestPlace] = useState<{
-    coords?: LatLng;
-    address?: string;
-  } | null>(null);
-  const [directions, setDirections] =
-    useState<google.maps.DirectionsResult | null>(null);
+  const [originPlace, setOriginPlace] = useState<{ coords?: LatLng; address?: string } | null>(null);
+  const [destPlace, setDestPlace] = useState<{ coords?: LatLng; address?: string } | null>(null);
+  
+  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
+  
+  // NEW: State to store Metro Stations
+  const [stations, setStations] = useState<Station[]>([]);
+  // NEW: State for InfoWindow (optional, if you want to click a station)
+  const [selectedStation, setSelectedStation] = useState<Station | null>(null);
 
   const mapRef = useRef<google.maps.Map | null>(null);
 
-  // Handle Internal Geolocation if no prop provided
+  // Handle Internal Geolocation
   useEffect(() => {
     if (isValidLatLng(propCurrentLocation)) {
       setMapCenter(propCurrentLocation);
@@ -184,28 +148,17 @@ export function MapView({
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setInternalCurrentLocation(coords);
-          // Only update center if we haven't received a valid prop location yet
-          if (!isValidLatLng(propCurrentLocation)) {
-            setMapCenter(coords);
-          }
+          if (!isValidLatLng(propCurrentLocation)) setMapCenter(coords);
         },
-        (err) => {
-          console.warn("Geolocation error:", err);
-        },
+        (err) => console.warn("Geolocation error:", err),
         { enableHighAccuracy: true }
       );
     }
   }, [propCurrentLocation]);
 
-  // Effect to handle route calculation if destination prop changes (from parent)
+  // Handle prop-based routing
   useEffect(() => {
-    if (
-      isLoaded &&
-      showRoute &&
-      destination &&
-      isValidLatLng(destination) &&
-      isValidLatLng(currentLocation)
-    ) {
+    if (isLoaded && showRoute && destination && isValidLatLng(destination) && isValidLatLng(currentLocation)) {
       const ds = new google.maps.DirectionsService();
       ds.route(
         {
@@ -216,9 +169,7 @@ export function MapView({
         (result, status) => {
           if (status === google.maps.DirectionsStatus.OK && result) {
             setDirections(result);
-            if (mapRef.current) {
-              mapRef.current.fitBounds(result.routes[0].bounds);
-            }
+            if (mapRef.current) mapRef.current.fitBounds(result.routes[0].bounds);
           }
         }
       );
@@ -238,6 +189,8 @@ export function MapView({
       return;
     }
     setLoadingRoute(true);
+    // Clear previous stations when new route requested
+    setStations([]); 
 
     const ds = new google.maps.DirectionsService();
     ds.route(
@@ -261,6 +214,55 @@ export function MapView({
     );
   };
 
+  // ----------------------------------------------------------------------
+  // Send Route to Backend & Get Stations
+  // ----------------------------------------------------------------------
+  useEffect(() => {
+    if (!directions || !directions.routes || directions.routes.length === 0) {
+      return;
+    }
+
+    const route = directions.routes[0];
+    const routePoints = route.overview_path.map((point) => ({
+      latitude: point.lat(),
+      longitude: point.lng(),
+    }));
+
+    const leg = route.legs[0];
+    const summary = {
+      start_address: leg.start_address,
+      end_address: leg.end_address,
+    };
+
+    const sendToBackend = async () => {
+      try {
+        console.log("Fetching stations along route...");
+        const response = await stationApi.getStationsAlongRoute(
+          summary.start_address,
+          summary.end_address,
+          routePoints
+        );
+        
+        console.log("Stations received:", response.data);
+        
+        // UPDATE STATE WITH RECEIVED STATIONS
+        if (response.data && response.data.stations) {
+            setStations(response.data.stations);
+        } else {
+            console.warn("No stations found in response");
+        }
+
+      } catch (error) {
+        console.error("Error fetching stations:", error);
+      }
+    };
+
+    if (routePoints.length > 0) {
+      sendToBackend();
+    }
+
+  }, [directions]); 
+  
   if (!isLoaded) {
     return (
       <Card className="h-full min-h-[400px] p-4 flex items-center justify-center">
@@ -271,22 +273,18 @@ export function MapView({
 
   return (
     <Card className="h-full min-h-[400px] relative overflow-hidden">
-      {/* Only show manual controls if NOT in active route mode controlled by parent */}
       {!showRoute && (
         <div className="absolute top-4 left-4 right-4 z-30 pointer-events-auto">
           <div className="flex gap-2 items-center bg-white/90 p-2 rounded-lg backdrop-blur-sm shadow-md">
             <div className="flex-1 max-w-[420px]">
               <PlaceSearchBox
-                placeholder={
-                  currentLocation ? "Current Location (or search)" : "Search Source"
-                }
+                placeholder={currentLocation ? "Current Location (or search)" : "Search Source"}
                 onPlaceSelect={(place) => {
                   setOriginPlace(place);
                   if (isValidLatLng(place.coords)) setMapCenter(place.coords);
                 }}
               />
             </div>
-
             <div className="flex-1 max-w-[420px]">
               <PlaceSearchBox
                 placeholder="Search Destination"
@@ -296,7 +294,6 @@ export function MapView({
                 }}
               />
             </div>
-
             <button
               onClick={requestRoute}
               disabled={loadingRoute}
@@ -312,7 +309,6 @@ export function MapView({
       <div className="absolute inset-0">
         <GoogleMap
           mapContainerStyle={containerStyle}
-          // Fallback center to prevent crashes if mapCenter becomes invalid
           center={isValidLatLng(mapCenter) ? mapCenter : { lat: 28.6139, lng: 77.209 }}
           zoom={14}
           onLoad={onLoadMap}
@@ -338,7 +334,7 @@ export function MapView({
             />
           )}
 
-          {/* origin/destination markers for manual search */}
+          {/* User Search Markers */}
           {isValidLatLng(originPlace?.coords) && (
             <Marker position={originPlace!.coords!} title={originPlace!.address} />
           )}
@@ -346,7 +342,42 @@ export function MapView({
             <Marker position={destPlace!.coords!} title={destPlace!.address} />
           )}
 
-          {/* render route */}
+          {/* ----------------------------------------------------------- */}
+          {/* NEW: RENDER METRO STATIONS AS RED MARKERS */}
+          {/* ----------------------------------------------------------- */}
+          {stations.map((station) => (
+            <Marker
+              key={station.station_id || station.name}
+              position={{ lat: station.latitude, lng: station.longitude }}
+              title={station.name}
+              onClick={() => setSelectedStation(station)}
+              // Custom Red Icon configuration
+              icon={{
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 6, // Size of the dot
+                fillColor: "#FF0000", // RED Color
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#FFFFFF", // White border
+              }}
+            />
+          ))}
+
+          {/* Optional: Show InfoWindow when a station is clicked */}
+          {selectedStation && (
+            <InfoWindow
+              position={{ lat: selectedStation.latitude, lng: selectedStation.longitude }}
+              onCloseClick={() => setSelectedStation(null)}
+            >
+              <div className="text-black p-1">
+                <h3 className="font-bold">{selectedStation.name}</h3>
+                <p className="text-sm">Metro Station</p>
+                {selectedStation.line && <p className="text-xs text-gray-600">{selectedStation.line}</p>}
+              </div>
+            </InfoWindow>
+          )}
+
+          {/* Route Line */}
           {directions && (
             <DirectionsRenderer
               directions={directions}
@@ -357,7 +388,7 @@ export function MapView({
                   strokeWeight: 6,
                 },
                 markerOptions: {
-                  visible: false,
+                  visible: false, // We hide default A/B markers if we are using our own
                 },
               }}
             />

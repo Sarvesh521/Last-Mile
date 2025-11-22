@@ -26,9 +26,15 @@ service StationService {
   };
 }
 
+message LatLng {
+  double latitude = 1;
+  double longitude = 2;
+}
+
 message GetStationsAlongRouteRequest {
   string origin = 1;
   string destination = 2;
+  repeated LatLng route_points = 3; 
 }
 
 message GetStationsAlongRouteResponse {
