@@ -13,35 +13,43 @@ option java_outer_classname = "RiderProto";
 service RiderService {
   rpc RegisterRideRequest(RegisterRideRequestRequest) returns (RegisterRideRequestResponse){
     option (google.api.http) = {
-      post: "/rider/ride-request"
-      body: "*"
-    };
-  };
-  rpc GetRideStatus(GetRideStatusRequest) returns (GetRideStatusResponse){
-    option (google.api.http) = {
-      get: "/rider/ride-request/{ride_request_id}"
-    };
-  };
-  rpc CancelRideRequest(CancelRideRequestRequest) returns (CancelRideRequestResponse){
-    option (google.api.http) = {
-      post: "/rider/ride-request/{ride_request_id}/cancel"
+      post: "/rider/ride-register/{rider_id}"
       body: "*"
     };
   };
 
-  // List all ride requests for a rider
+  rpc GetRideStatus(GetRideStatusRequest) returns (GetRideStatusResponse){
+    option (google.api.http) = {
+      get: "/rider/ride-status/{rider_id}"
+    };
+  };
+
   rpc ListRideRequests(ListRideRequestsRequest) returns (ListRideRequestsResponse) {
     option (google.api.http) = {
       get: "/rider/ride-requests/{rider_id}"
     };
   };
 
-  // Hard delete a ride request
-  rpc DeleteRideRequest(DeleteRideRequestRequest) returns (DeleteRideRequestResponse) {
+  rpc GetRiderDashboard(GetRiderDashboardRequest) returns (GetRiderDashboardResponse){
     option (google.api.http) = {
-      delete: "/rider/ride-request/{ride_request_id}"
+      get: "/rider/dashboard/{rider_id}"
     };
   };
+
+  rpc GetRiderInfo(GetRiderInfoRequest) returns (GetRiderInfoResponse);  
+
+  rpc CancelRideRequest(CancelRideRequestRequest) returns (CancelRideRequestResponse);
+
+  rpc RateDriver(RateDriverRequest) returns (RateDriverResponse);
+
+  rpc SetRatingFromDriver(SetRatingFromDriverRequest) returns (SetRatingFromDriverResponse);
+
+  rpc MatchedWithDriver (MatchedWithDriverRequest) returns (MatchedWithDriverResponse);
+
+  rpc RideStarted (RideStartedRequest) returns (RideStartedResponse);
+
+  rpc RideCompleted (RideCompletedRequest) returns (RideCompletedResponse);
+
 }
 
 message RegisterRideRequestRequest {
@@ -58,7 +66,7 @@ message RegisterRideRequestResponse {
 }
 
 message GetRideStatusRequest {
-  string ride_request_id = 1;
+  string rider_id = 1;
 }
 
 message GetRideStatusResponse {
@@ -70,7 +78,7 @@ message GetRideStatusResponse {
 }
 
 message CancelRideRequestRequest {
-  string ride_request_id = 1;
+  string rider_id = 1;
 }
 
 message CancelRideRequestResponse {
@@ -87,6 +95,7 @@ message RideRequestItem {
   RideStatus status = 6;
   string driver_id = 7;
   string trip_id = 8;
+  int64 request_time = 9;
 }
 
 message ListRideRequestsRequest {
@@ -98,11 +107,80 @@ message ListRideRequestsResponse {
   bool success = 2;
 }
 
-message DeleteRideRequestRequest {
-  string ride_request_id = 1;
+message MatchedWithDriverRequest {
+  string rider_id = 1;
+  string driver_id = 2;
+  string trip_id = 3;
 }
 
-message DeleteRideRequestResponse {
+message MatchedWithDriverResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RideStartedRequest {
+  string rider_id = 1;
+  string trip_id = 2;
+}
+
+message RideStartedResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RideCompletedRequest {
+  string rider_id = 1;
+  string trip_id = 2;
+  int64 dropoff_time = 3;
+}
+
+message RideCompletedResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetRiderDashboardRequest {
+  string rider_id = 1;
+}
+
+message GetRiderDashboardResponse {
+  string rider_id = 1;
+  double rating = 2;
+  int32 total_rides = 3;
+  RideRequestItem current_ride = 4;
+  repeated RideRequestItem ride_history = 5;
+  bool success = 6;
+}
+
+message GetRiderInfoRequest {
+  string rider_id = 1;
+}
+
+message GetRiderInfoResponse {
+  string rider_id = 1;
+  double rating = 2;
+  int32 total_rides = 3;
+  bool success = 4;
+}
+
+message RateDriverRequest {
+  string rider_id = 1;
+  string trip_id = 2;
+  int32 rating = 3;
+  string feedback = 4;
+}
+
+message RateDriverResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message SetRatingFromDriverRequest {
+  string rider_id = 1;
+  int32 rating = 2;
+}
+
+message SetRatingFromDriverResponse {
   bool success = 1;
   string message = 2;
 }

@@ -13,7 +13,7 @@ option java_outer_classname = "DriverProto";
 service DriverService {
   rpc RegisterRoute(RegisterRouteRequest) returns (RegisterRouteResponse){
     option (google.api.http) = {
-      post: "/driver/register-route"
+      post: "/driver/{driver_id}/register-route"
       body: "*"
     };
   };

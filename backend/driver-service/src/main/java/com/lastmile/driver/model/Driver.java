@@ -42,5 +42,6 @@ public class Driver {
         private long dropoffTimestamp; // epoch ms (if completed)
         private int riderRatingGiven; 
         private int driverRatingReceived; 
+    }
 }
 
