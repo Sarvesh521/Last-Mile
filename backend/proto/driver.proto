@@ -23,28 +23,33 @@ service DriverService {
       body: "*"
     };
   };
-  rpc GetDriverInfo(GetDriverInfoRequest) returns (GetDriverInfoResponse){
-    option (google.api.http) = {
-      get: "/driver/{driver_id}"
-    };
-  };
-  rpc ListDrivers(ListDriversRequest) returns (ListDriversResponse);
-  
+
   rpc GetDriverDashboard(GetDriverDashboardRequest) returns (GetDriverDashboardResponse) {
     option (google.api.http) = { 
       get: "/driver/dashboard/{driver_id}" 
     };
   };
 
-  // Add a trip to driver's active list (Internal use by Trip/Matching service)
-  rpc AddTrip(AddTripRequest) returns (AddTripResponse);
+  // Fetch driver info for Matching Service
+  rpc GetDriverInfo(GetDriverInfoRequest) returns (GetDriverInfoResponse);
 
-  // Driver rates rider after trip completion
-  rpc RateRider(RateRiderRequest) returns (RateRiderResponse) {
-    option (google.api.http) = { 
-      post: "/driver/{driver_id}/rate-rider" body: "*" 
-    };
-  };
+  // Used by Matching Service to fetch available drivers at a station
+  rpc ListDrivers(ListDriversRequest) returns (ListDriversResponse);
+  
+  // Assign a trip to driver's active trips Trip Service
+  rpc AcceptTrip(AcceptTripRequest) returns (AcceptTripResponse);
+
+  // Driver rates rider at end of trip called from Trip Service
+  rpc RateRider(RateRiderRequest) returns (RateRiderResponse);
+
+  // Rider rates driver at end of trip called from Trip Service
+  rpc SetRatingReceivedFromRider(SetRatingReceivedFromRiderRequest) returns (SetRatingReceivedFromRiderResponse);
+
+  // Driver completes an active trip called from Trip Service
+  rpc CompleteActiveTrip(CompleteActiveTripRequest) returns (CompleteActiveTripResponse);
+
+  // Driver starts an active trip called from Trip Service
+  rpc StartTrip(StartTripRequest) returns (StartTripResponse);
 }
 
 message RegisterRouteRequest {
@@ -107,14 +112,14 @@ message ListDriversResponse {
 // Trip information currently active or scheduled
 message TripInfo {
   string trip_id = 1;
-  string rider_name = 2;
-  double rider_rating = 3; // snapshot of rider rating
-  string pickup_station = 4;
-  string destination = 5;
-  string status = 6; // scheduled | active | completed
-  int32 fare = 7;
-  int64 pickup_timestamp = 8; // epoch ms
-  string rider_id = 9;
+  string rider_id = 2;
+  string rider_name = 3;
+  double rider_rating = 4; // snapshot of rider rating
+  string pickup_station = 5;
+  string destination = 6;
+  string status = 7; // scheduled | active | completed
+  int32 fare = 8;
+  int64 pickup_timestamp = 9; // epoch ms
 }
 
 // Completed ride history item
@@ -148,20 +153,19 @@ message GetDriverDashboardResponse {
   Location current_location = 13;
 }
 
-message AddTripRequest {
+message AcceptTripRequest {
   string driver_id = 1;
   string trip_id = 2;
   string rider_name = 3;
   double rider_rating = 4;
   string pickup_station = 5;
   string destination = 6;
-  string status = 7;
-  int32 fare = 8;
-  int64 pickup_timestamp = 9;
-  string rider_id = 10;
+  int32 fare = 7;
+  int64 pickup_timestamp = 8;
+  string rider_id = 9;
 }
 
-message AddTripResponse {
+message AcceptTripResponse {
   bool success = 1;
   string message = 2;
 }
@@ -184,3 +188,33 @@ message Location {
   int64 timestamp = 3;
 }
 
+message SetRatingReceivedFromRiderRequest {
+  string driver_id = 1;
+  string trip_id = 2;
+  int32 rating = 3; // 1-5
+}
+
+message SetRatingReceivedFromRiderResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message CompleteActiveTripRequest {
+  string driver_id = 1;
+  string trip_id = 2;
+}
+
+message CompleteActiveTripResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StartTripRequest {
+  string driver_id = 1;
+  string trip_id = 2;
+}
+
+message StartTripResponse {
+  bool success = 1;
+  string message = 2;
+}

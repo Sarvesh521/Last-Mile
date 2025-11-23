@@ -87,7 +87,7 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
     }
 
     @Override
-    public void addTrip(AddTripRequest request, StreamObserver<AddTripResponse> responseObserver) {
+    public void acceptTrip(AcceptTripRequest request, StreamObserver<AcceptTripResponse> responseObserver) {
         String driverId = request.getDriverId();
         
         Driver.TripRecord record = new Driver.TripRecord();
@@ -97,19 +97,98 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
         record.setRiderRating(request.getRiderRating());
         record.setPickupStation(request.getPickupStation());
         record.setDestination(request.getDestination());
-        record.setStatus(request.getStatus());
+        record.setStatus("scheduled");
         record.setFare(request.getFare());
         record.setPickupTimestamp(request.getPickupTimestamp());
         Query query = new Query(Criteria.where("_id").is(driverId));
-        Update update = new Update().push("activeTrips", record);
+        Update update = new Update()
+                .push("activeTrips", record)
+                .inc("availableSeats", -1);
         
         long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
         
-        AddTripResponse response = AddTripResponse.newBuilder()
+        AcceptTripResponse response = AcceptTripResponse.newBuilder()
                 .setSuccess(modifiedCount > 0)
-                .setMessage(modifiedCount > 0 ? "Trip added" : "Driver not found")
+                .setMessage(modifiedCount > 0 ? "Trip accepted" : "Driver not found")
                 .build();
         
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void startTrip(StartTripRequest request, StreamObserver<StartTripResponse> responseObserver) {
+        String driverId = request.getDriverId();
+        String tripId = request.getTripId();
+
+        Query query = new Query(Criteria.where("_id").is(driverId)
+                .and("activeTrips.tripId").is(tripId));
+        Update update = new Update()
+                .set("activeTrips.$.status", "active")
+                .set("activeTrips.$.pickupTimestamp", System.currentTimeMillis());
+
+        long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
+
+        StartTripResponse response = StartTripResponse.newBuilder()
+                .setSuccess(modifiedCount > 0)
+                .setMessage(modifiedCount > 0 ? "Trip started" : "Trip not found")
+                .build();
+
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override 
+    public void completeActiveTrip(CompleteActiveTripRequest request, StreamObserver<CompleteActiveTripResponse> responseObserver) {
+        String driverId = request.getDriverId();
+        String tripId = request.getTripId();
+
+        Driver driver = driverRepository.findById(driverId).orElse(null);
+        if (driver == null) {
+             CompleteActiveTripResponse response = CompleteActiveTripResponse.newBuilder()
+                .setSuccess(false).setMessage("Driver not found").build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+            return;
+        }
+
+
+        Driver.TripRecord tripToMove = null;
+        if (driver.getActiveTrips() != null) {
+            for (Driver.TripRecord t : driver.getActiveTrips()) {
+                if (t.getTripId().equals(tripId)) {
+                    tripToMove = t;
+                    break;
+                }
+            }
+        }
+
+        if (tripToMove == null) {
+             CompleteActiveTripResponse response = CompleteActiveTripResponse.newBuilder()
+                .setSuccess(false).setMessage("Trip not found in active trips").build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+            return;
+        }
+
+
+        tripToMove.setStatus("completed");
+        tripToMove.setDropoffTimestamp(System.currentTimeMillis());
+
+        Query query = new Query(Criteria.where("_id").is(driverId).and("activeTrips.tripId").is(tripId));
+        Update update = new Update()
+                .pull("activeTrips", Query.query(Criteria.where("tripId").is(tripId)))
+                .push("rideHistory", tripToMove)
+                .inc("totalEarnings", tripToMove.getFare())
+                .inc("availableSeats", 1);
+
+        long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
+
+        CompleteActiveTripResponse response = CompleteActiveTripResponse.newBuilder()
+                .setSuccess(modifiedCount > 0)
+                .setMessage(modifiedCount > 0 ? "Trip completed successfully" : "Trip state changed concurrently")
+                .build();
+
         responseObserver.onNext(response);
         responseObserver.onCompleted();
     }
@@ -158,9 +237,8 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
         if (station == null || station.isEmpty()) {
              drivers = driverRepository.findAll();
         } else {
-             drivers = driverRepository.findAll().stream()
-                .filter(d -> d.getMetroStations() != null && d.getMetroStations().contains(station))
-                .toList();
+             // Optimized: Use DB query instead of filtering in memory
+             drivers = driverRepository.findByMetroStationsContaining(station);
         }
         
         List<DriverInfo> driverInfos = drivers.stream().map(driver -> {
@@ -204,17 +282,16 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
             return;
         }
 
-        // Ensure lists not null
+
         if (driver.getActiveTrips() == null) driver.setActiveTrips(new ArrayList<>());
         if (driver.getRideHistory() == null) driver.setRideHistory(new ArrayList<>());
 
-        // Compute earnings (total already stored; recalc safety if zero)
+
         int totalEarnings = driver.getTotalEarnings();
         if (totalEarnings == 0 && !driver.getRideHistory().isEmpty()) {
             totalEarnings = driver.getRideHistory().stream().mapToInt(Driver.TripRecord::getFare).sum();
         }
 
-        // Compute driver rating from history
         double computedRating = driver.getRating();
         if (!driver.getRideHistory().isEmpty()) {
             double avgRating = driver.getRideHistory().stream()
@@ -239,7 +316,6 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
             else if (tripDay.equals(yesterday)) yesterdayEarnings += rec.getFare();
         }
 
-        // Build active trips list
         for (Driver.TripRecord rec : driver.getActiveTrips()) {
             TripInfo info = TripInfo.newBuilder()
                     .setTripId(rec.getTripId())
@@ -296,20 +372,41 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
     public void rateRider(RateRiderRequest request, StreamObserver<RateRiderResponse> responseObserver) {
         String driverId = request.getDriverId();
         String tripId = request.getTripId();
-        double rating = request.getRating();
+        int rating = request.getRating();
         
-        // Update local driver record using atomic update
         Query query = new Query(Criteria.where("_id").is(driverId)
-                .and("activeTrips.tripId").is(tripId));
-        Update update = new Update().set("activeTrips.$.riderRating", rating);
+                .and("rideHistory.tripId").is(tripId));
+        Update update = new Update().set("rideHistory.$.riderRatingGiven", rating);
         
         long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
         
         RateRiderResponse response = RateRiderResponse.newBuilder()
                 .setSuccess(modifiedCount > 0)
-                .setMessage(modifiedCount > 0 ? "Rider rated successfully" : "Trip not found")
+                .setMessage(modifiedCount > 0 ? "Rider rated successfully" : "Trip not found in history")
                 .build();
         
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+
+    @Override
+    public void setRatingReceivedFromRider(SetRatingReceivedFromRiderRequest request, StreamObserver<SetRatingReceivedFromRiderResponse> responseObserver) {
+        String driverId = request.getDriverId();
+        String tripId = request.getTripId();
+        int rating = request.getRating();
+
+        Query query = new Query(Criteria.where("_id").is(driverId)
+                .and("rideHistory.tripId").is(tripId));
+        Update update = new Update().set("rideHistory.$.driverRatingReceived", rating);
+
+        long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
+
+        SetRatingReceivedFromRiderResponse response = SetRatingReceivedFromRiderResponse.newBuilder()
+                .setSuccess(modifiedCount > 0)
+                .setMessage(modifiedCount > 0 ? "Driver rating updated successfully" : "Trip not found in history")
+                .build();
+
         responseObserver.onNext(response);
         responseObserver.onCompleted();
     }

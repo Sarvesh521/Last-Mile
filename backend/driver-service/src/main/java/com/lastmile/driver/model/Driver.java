@@ -33,15 +33,14 @@ public class Driver {
         private String tripId;
         private String riderId; 
         private String riderName;
-        private double riderRating;
+        private double riderRating; // rating of rider at time of trip
         private String pickupStation;
         private String destination;
         private String status; // scheduled | active | completed
         private int fare;
         private long pickupTimestamp; // epoch ms
         private long dropoffTimestamp; // epoch ms (if completed)
-        private int riderRatingGiven; // rating given by driver to rider (1-5)
-        private int driverRatingReceived; // rating received by driver from rider (1-5)
-    }
+        private int riderRatingGiven; 
+        private int driverRatingReceived; 
 }
 
