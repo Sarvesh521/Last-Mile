@@ -36,18 +36,25 @@ service RiderService {
     };
   };
 
+
   rpc GetRiderInfo(GetRiderInfoRequest) returns (GetRiderInfoResponse);  
 
+  // Cancel an active ride request called from Trip Service
   rpc CancelRideRequest(CancelRideRequestRequest) returns (CancelRideRequestResponse);
 
+  // Rate a driver at end of trip called from Trip Service
   rpc RateDriver(RateDriverRequest) returns (RateDriverResponse);
 
+  // Set rating for rider from driver at end of trip called from Trip Service
   rpc SetRatingFromDriver(SetRatingFromDriverRequest) returns (SetRatingFromDriverResponse);
 
+  // Notify rider that they have been matched with a driver called from (Trip / Matching Service)
   rpc MatchedWithDriver (MatchedWithDriverRequest) returns (MatchedWithDriverResponse);
 
+  // Notify rider that their ride has started called from Trip Service
   rpc RideStarted (RideStartedRequest) returns (RideStartedResponse);
 
+  // Notify rider that their ride has completed called from Trip Service
   rpc RideCompleted (RideCompletedRequest) returns (RideCompletedResponse);
 
 }
@@ -75,6 +82,7 @@ message GetRideStatusResponse {
   string driver_id = 3;
   string trip_id = 4;
   bool success = 5;
+  string message = 6;
 }
 
 message CancelRideRequestRequest {
@@ -96,6 +104,10 @@ message RideRequestItem {
   string driver_id = 7;
   string trip_id = 8;
   int64 request_time = 9;
+  int32 fare = 10;
+  int32 driver_rating_given = 11;
+  int32 rider_rating_received = 12;
+  int64 dropoff_time = 13;
 }
 
 message ListRideRequestsRequest {
@@ -132,6 +144,7 @@ message RideCompletedRequest {
   string rider_id = 1;
   string trip_id = 2;
   int64 dropoff_time = 3;
+  int32 fare = 4;
 }
 
 message RideCompletedResponse {
@@ -167,7 +180,6 @@ message RateDriverRequest {
   string rider_id = 1;
   string trip_id = 2;
   int32 rating = 3;
-  string feedback = 4;
 }
 
 message RateDriverResponse {
@@ -177,7 +189,8 @@ message RateDriverResponse {
 
 message SetRatingFromDriverRequest {
   string rider_id = 1;
-  int32 rating = 2;
+  string trip_id = 2;
+  int32 rating = 3;
 }
 
 message SetRatingFromDriverResponse {

@@ -85,7 +85,8 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                         .setStatus(status)
                         .setDriverId(rr.getDriverId() != null ? rr.getDriverId() : "")
                         .setTripId(rr.getTripId() != null ? rr.getTripId() : "")
-                        .setSuccess(true);
+                        .setSuccess(true)
+                        .setMessage("Ride status retrieved successfully");
             } else {
                 responseBuilder.setSuccess(false).setMessage("No active ride request found for rider");
             }
@@ -143,11 +144,11 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
         try {
             Rider rider = riderRepository.findById(riderId).orElse(null);
             if (rider != null) {
-                // Add current request
+
                 if (rider.getCurrentRideRequest() != null) {
                     builder.addRideRequests(mapToProto(rider.getCurrentRideRequest(), riderId));
                 }
-                // Add history
+
                 if (rider.getRideHistory() != null) {
                     for (Rider.RideRequest rr : rider.getRideHistory()) {
                         builder.addRideRequests(mapToProto(rr, riderId));
@@ -173,6 +174,10 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 .setStatus(convertStatus(rr.getStatus()))
                 .setDriverId(rr.getDriverId() == null ? "" : rr.getDriverId())
                 .setTripId(rr.getTripId() == null ? "" : rr.getTripId())
+                .setFare(rr.getFare())
+                .setDriverRatingGiven(rr.getDriverRatingGiven())
+                .setRiderRatingReceived(rr.getRiderRatingReceived())
+                .setDropoffTime(rr.getDropoffTime())
                 .build();
     }
 
@@ -243,6 +248,7 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                             StreamObserver<RideCompletedResponse> responseObserver) {
         String riderId = request.getRiderId();
         long dropoffTime = request.getDropoffTime();
+        int fare = request.getFare();
         
         RideCompletedResponse.Builder responseBuilder = RideCompletedResponse.newBuilder();
         
@@ -253,14 +259,13 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 Rider.RideRequest rr = rider.getCurrentRideRequest();
                 rr.setStatus(Rider.RideRequest.RideStatus.COMPLETED);
                 rr.setDropoffTime(dropoffTime);
+                rr.setFare(fare);
                 
-                // Move to history
                 if (rider.getRideHistory() == null) {
                     rider.setRideHistory(new ArrayList<>());
                 }
                 rider.getRideHistory().add(rr);
                 
-                // Clear current request
                 rider.setCurrentRideRequest(null);
                 rider.setTotalRides(rider.getTotalRides() + 1);
                 
@@ -338,10 +343,49 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
     @Override
     public void rateDriver(RateDriverRequest request,
                          StreamObserver<RateDriverResponse> responseObserver) {
-        // In a real microservices architecture, this might call the Trip Service or Driver Service.
-        // For now, we'll just acknowledge the request.
+        String riderId = request.getRiderId();
+        String tripId = request.getTripId();
+        int rating = request.getRating();
+
         RateDriverResponse.Builder responseBuilder = RateDriverResponse.newBuilder();
-        responseBuilder.setSuccess(true).setMessage("Driver rated successfully");
+        
+        try {
+            if (tripId == null || tripId.isEmpty()) {
+                responseBuilder.setSuccess(false).setMessage("Trip ID is required");
+            } else {
+                Rider rider = riderRepository.findById(riderId).orElse(null);
+                if (rider != null) {
+                    boolean tripFound = false;
+                    // Check history for the trip
+                    if (rider.getRideHistory() != null) {
+                        for (Rider.RideRequest rr : rider.getRideHistory()) {
+                            if (tripId.equals(rr.getTripId())) {
+                                rr.setDriverRatingGiven(rating);
+                                tripFound = true;
+                                break;
+                            }
+                        }
+                    }
+                    // Check current request (unlikely for rating, but possible if not moved to history yet)
+                    if (!tripFound && rider.getCurrentRideRequest() != null && tripId.equals(rider.getCurrentRideRequest().getTripId())) {
+                        rider.getCurrentRideRequest().setDriverRatingGiven(rating);
+                        tripFound = true;
+                    }
+                    
+                    if (tripFound) {
+                        riderRepository.save(rider);
+                        responseBuilder.setSuccess(true).setMessage("Driver rated successfully");
+                    } else {
+                        responseBuilder.setSuccess(false).setMessage("Trip not found for this rider");
+                    }
+                } else {
+                    responseBuilder.setSuccess(false).setMessage("Rider not found");
+                }
+            }
+        } catch (Exception e) {
+            responseBuilder.setSuccess(false).setMessage(e.getMessage());
+        }
+        
         responseObserver.onNext(responseBuilder.build());
         responseObserver.onCompleted();
     }
@@ -350,27 +394,49 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
     public void setRatingFromDriver(SetRatingFromDriverRequest request,
                                   StreamObserver<SetRatingFromDriverResponse> responseObserver) {
         String riderId = request.getRiderId();
-        double newRating = request.getRating();
+        String tripId = request.getTripId();
+        int newRating = request.getRating();
         
         SetRatingFromDriverResponse.Builder responseBuilder = SetRatingFromDriverResponse.newBuilder();
         
         try {
             Rider rider = riderRepository.findById(riderId).orElse(null);
             if (rider != null) {
-                // Simple moving average calculation
-                // Assuming totalRides includes the current completed ride
-                int n = rider.getTotalRides();
-                if (n > 0) {
-                     double currentAvg = rider.getRating();
-                     // Calculate new average: (old_sum + new_val) / n
-                     // old_sum approx = currentAvg * (n - 1)
-                     double updatedAvg = ((currentAvg * (n - 1)) + newRating) / n;
-                     rider.setRating(updatedAvg);
-                } else {
-                    rider.setRating(newRating);
+                boolean found = false;
+                if (rider.getRideHistory() != null) {
+                    for (Rider.RideRequest rr : rider.getRideHistory()) {
+                        if (rr.getTripId() != null && rr.getTripId().equals(tripId)) {
+                            rr.setRiderRatingReceived(newRating);
+                            found = true;
+                            break;
+                        }
+                    }
                 }
-                riderRepository.save(rider);
-                responseBuilder.setSuccess(true).setMessage("Rating updated");
+                
+                if (found) {
+                    double totalRating = 0;
+                    int ratedRidesCount = 0;
+                    
+                    if (rider.getRideHistory() != null) {
+                        for (Rider.RideRequest rr : rider.getRideHistory()) {
+                            if (rr.getRiderRatingReceived() > 0) {
+                                totalRating += rr.getRiderRatingReceived();
+                                ratedRidesCount++;
+                            }
+                        }
+                    }
+                    
+                    if (ratedRidesCount > 0) {
+                        rider.setRating(totalRating / ratedRidesCount);
+                    } else {
+                        rider.setRating(newRating);
+                    }
+                    
+                    riderRepository.save(rider);
+                    responseBuilder.setSuccess(true).setMessage("Rating updated");
+                } else {
+                    responseBuilder.setSuccess(false).setMessage("Trip not found in rider history");
+                }
             } else {
                 responseBuilder.setSuccess(false).setMessage("Rider not found");
             }

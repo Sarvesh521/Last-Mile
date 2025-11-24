@@ -27,6 +27,9 @@ public class Rider {
         private RideStatus status;
         private String driverId;
         private String tripId;
+        private int fare;
+        private int driverRatingGiven;
+        private int riderRatingReceived;
         
         public enum RideStatus {
             PENDING, MATCHED, IN_PROGRESS, COMPLETED, CANCELLED
