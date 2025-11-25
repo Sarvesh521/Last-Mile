@@ -18,9 +18,10 @@ public class Trip {
     private long pickupTime;
     private long dropoffTime;
     private String matchId;
+    private int fare;
     
     public enum TripStatus {
-        SCHEDULED, ACTIVE, COMPLETED, CANCELLED
+        SCHEDULED, ACTIVE, COMPLETED
     }
 }
 

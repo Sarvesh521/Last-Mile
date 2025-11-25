@@ -3,7 +3,7 @@ syntax = "proto3";
 package com.lastmile.trip.proto;
 
 import "google/api/annotations.proto";
-import "google/api/http.proto";          // <--- REQUIRED for envoy transcoder
+import "google/api/http.proto";         
 import "google/protobuf/empty.proto"; 
 
 option java_multiple_files = true;
@@ -11,8 +11,10 @@ option java_package = "com.lastmile.trip.proto";
 option java_outer_classname = "TripProto";
 
 service TripService {
+
+  // called from Matching Service after the driver and rider have been matched
   rpc CreateTrip(CreateTripRequest) returns (CreateTripResponse);
-  rpc UpdateTripStatus(UpdateTripStatusRequest) returns (UpdateTripStatusResponse);
+  
   rpc GetTripInfo(GetTripInfoRequest) returns (GetTripInfoResponse){
     option (google.api.http) = {
       get: "/trip/{trip_id}"
@@ -38,6 +40,7 @@ message CreateTripRequest {
   string pickup_station = 3;
   string destination = 4;
   string match_id = 5;
+  int32 fare = 6;
 }
 
 message CreateTripResponse {
@@ -46,15 +49,6 @@ message CreateTripResponse {
   string message = 3;
 }
 
-message UpdateTripStatusRequest {
-  string trip_id = 1;
-  TripStatus status = 2;
-}
-
-message UpdateTripStatusResponse {
-  bool success = 1;
-  string message = 2;
-}
 
 message GetTripInfoRequest {
   string trip_id = 1;
@@ -71,6 +65,7 @@ message GetTripInfoResponse {
   int64 pickup_time = 8;
   int64 dropoff_time = 9;
   bool success = 10;
+  int32 fare = 11;
 }
 
 message RecordPickupRequest {
@@ -88,6 +83,7 @@ message RecordDropoffRequest {
   string trip_id = 1;
   double latitude = 2;
   double longitude = 3;
+  int32 fare = 4;
 }
 
 message RecordDropoffResponse {
@@ -99,6 +95,5 @@ enum TripStatus {
   SCHEDULED = 0;
   ACTIVE = 1;
   COMPLETED = 2;
-  CANCELLED = 3;
 }
 

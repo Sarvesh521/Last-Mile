@@ -161,8 +161,7 @@ message AcceptTripRequest {
   string pickup_station = 5;
   string destination = 6;
   int32 fare = 7;
-  int64 pickup_timestamp = 8;
-  string rider_id = 9;
+  string rider_id = 8;
 }
 
 message AcceptTripResponse {

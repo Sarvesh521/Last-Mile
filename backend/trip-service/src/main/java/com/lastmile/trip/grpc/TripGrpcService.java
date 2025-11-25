@@ -3,8 +3,11 @@ package com.lastmile.trip.grpc;
 import com.lastmile.trip.model.Trip;
 import com.lastmile.trip.proto.*;
 import com.lastmile.trip.repository.TripRepository;
+import com.lastmile.driver.proto.*;
+import com.lastmile.rider.proto.*;
 import io.grpc.stub.StreamObserver;
 import net.devh.boot.grpc.server.service.GrpcService;
+import net.devh.boot.grpc.client.inject.GrpcClient;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.UUID;
@@ -14,6 +17,12 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
     
     @Autowired
     private TripRepository tripRepository;
+
+    @GrpcClient("rider-service")
+    private RiderServiceGrpc.RiderServiceBlockingStub riderStub;
+
+    @GrpcClient("driver-service")
+    private DriverServiceGrpc.DriverServiceBlockingStub driverStub;
     
     @Override
     public void createTrip(CreateTripRequest request,
@@ -23,12 +32,14 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
         String pickupStation = request.getPickupStation();
         String destination = request.getDestination();
         String matchId = request.getMatchId();
+        int fare = request.getFare();
         
         CreateTripResponse.Builder responseBuilder = CreateTripResponse.newBuilder();
         
         try {
             Trip trip = new Trip();
-            trip.setTripId(UUID.randomUUID().toString());
+            String tripId = UUID.randomUUID().toString();
+            trip.setTripId(tripId);
             trip.setDriverId(driverId);
             trip.setRiderId(riderId);
             trip.setPickupStation(pickupStation);
@@ -36,8 +47,49 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setStatus(Trip.TripStatus.SCHEDULED);
             trip.setCreatedAt(System.currentTimeMillis());
             trip.setMatchId(matchId);
+            trip.setFare(fare);
             
             trip = tripRepository.save(trip);
+
+            // Fetch Rider Info for Rating
+            double riderRating = 0.0;
+            try {
+                GetRiderInfoResponse riderInfo = riderStub.getRiderInfo(
+                    GetRiderInfoRequest.newBuilder().setRiderId(riderId).build()
+                );
+                if (riderInfo.getSuccess()) {
+                    riderRating = riderInfo.getRating();
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to fetch rider info: " + e.getMessage());
+            }
+
+            // Notify Driver
+            try {
+                driverStub.acceptTrip(AcceptTripRequest.newBuilder()
+                    .setDriverId(driverId)
+                    .setTripId(tripId)
+                    .setRiderId(riderId)
+                    .setRiderName("Rider " + riderId) // Get it from rider service (will create a function in rider service to fetch name given riderId)
+                    .setRiderRating(riderRating)
+                    .setPickupStation(pickupStation)
+                    .setDestination(destination)
+                    .setFare(fare)
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to notify driver: " + e.getMessage());
+            }
+
+            // Notify Rider
+            try {
+                riderStub.matchedWithDriver(MatchedWithDriverRequest.newBuilder()
+                    .setRiderId(riderId)
+                    .setDriverId(driverId)
+                    .setTripId(tripId)
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to notify rider: " + e.getMessage());
+            }
             
             responseBuilder.setTripId(trip.getTripId())
                     .setSuccess(true)
@@ -51,30 +103,7 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
         responseObserver.onCompleted();
     }
     
-    @Override
-    public void updateTripStatus(UpdateTripStatusRequest request,
-                                 StreamObserver<UpdateTripStatusResponse> responseObserver) {
-        String tripId = request.getTripId();
-        com.lastmile.trip.proto.TripStatus status = request.getStatus();
-        
-        UpdateTripStatusResponse.Builder responseBuilder = UpdateTripStatusResponse.newBuilder();
-        
-        try {
-            Trip trip = tripRepository.findById(tripId)
-                    .orElseThrow(() -> new RuntimeException("Trip not found"));
-            trip.setStatus(convertStatus(status));
-            tripRepository.save(trip);
-            
-            responseBuilder.setSuccess(true)
-                    .setMessage("Trip status updated successfully");
-        } catch (Exception e) {
-            responseBuilder.setSuccess(false)
-                    .setMessage(e.getMessage());
-        }
-        
-        responseObserver.onNext(responseBuilder.build());
-        responseObserver.onCompleted();
-    }
+
     
     @Override
     public void getTripInfo(GetTripInfoRequest request,
@@ -96,6 +125,7 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
                     .setCreatedAt(trip.getCreatedAt())
                     .setPickupTime(trip.getPickupTime())
                     .setDropoffTime(trip.getDropoffTime())
+                    .setFare(trip.getFare())
                     .setSuccess(true);
         } catch (Exception e) {
             responseBuilder.setSuccess(false);
@@ -118,6 +148,26 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setPickupTime(System.currentTimeMillis());
             trip.setStatus(Trip.TripStatus.ACTIVE);
             tripRepository.save(trip);
+
+            // Notify Driver
+            try {
+                driverStub.startTrip(StartTripRequest.newBuilder()
+                    .setDriverId(trip.getDriverId())
+                    .setTripId(tripId)
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to start trip on driver service: " + e.getMessage());
+            }
+
+            // Notify Rider
+            try {
+                riderStub.rideStarted(RideStartedRequest.newBuilder()
+                    .setRiderId(trip.getRiderId())
+                    .setTripId(tripId)
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to notify rider of ride start: " + e.getMessage());
+            }
             
             responseBuilder.setSuccess(true)
                     .setMessage("Pickup recorded successfully");
@@ -134,6 +184,7 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
     public void recordDropoff(RecordDropoffRequest request,
                              StreamObserver<RecordDropoffResponse> responseObserver) {
         String tripId = request.getTripId();
+        int fare = request.getFare();
         
         RecordDropoffResponse.Builder responseBuilder = RecordDropoffResponse.newBuilder();
         
@@ -142,7 +193,32 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
                     .orElseThrow(() -> new RuntimeException("Trip not found"));
             trip.setDropoffTime(System.currentTimeMillis());
             trip.setStatus(Trip.TripStatus.COMPLETED);
+            if (fare > 0) {
+                trip.setFare(fare);
+            }
             tripRepository.save(trip);
+
+            // Notify Driver
+            try {
+                driverStub.completeActiveTrip(CompleteActiveTripRequest.newBuilder()
+                    .setDriverId(trip.getDriverId())
+                    .setTripId(tripId)
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to complete trip on driver service: " + e.getMessage());
+            }
+
+            // Notify Rider
+            try {
+                riderStub.rideCompleted(RideCompletedRequest.newBuilder()
+                    .setRiderId(trip.getRiderId())
+                    .setTripId(tripId)
+                    .setDropoffTime(trip.getDropoffTime())
+                    .setFare(trip.getFare())
+                    .build());
+            } catch (Exception e) {
+                System.err.println("Failed to notify rider of ride completion: " + e.getMessage());
+            }
             
             responseBuilder.setSuccess(true)
                     .setMessage("Dropoff recorded successfully");
@@ -160,7 +236,6 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             case SCHEDULED -> Trip.TripStatus.SCHEDULED;
             case ACTIVE -> Trip.TripStatus.ACTIVE;
             case COMPLETED -> Trip.TripStatus.COMPLETED;
-            case CANCELLED -> Trip.TripStatus.CANCELLED;
             default -> Trip.TripStatus.SCHEDULED;
         };
     }
@@ -170,7 +245,6 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             case SCHEDULED -> com.lastmile.trip.proto.TripStatus.SCHEDULED;
             case ACTIVE -> com.lastmile.trip.proto.TripStatus.ACTIVE;
             case COMPLETED -> com.lastmile.trip.proto.TripStatus.COMPLETED;
-            case CANCELLED -> com.lastmile.trip.proto.TripStatus.CANCELLED;
         };
     }
 }

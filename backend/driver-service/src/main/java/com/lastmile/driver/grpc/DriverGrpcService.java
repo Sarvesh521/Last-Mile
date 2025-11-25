@@ -99,7 +99,6 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
         record.setDestination(request.getDestination());
         record.setStatus("scheduled");
         record.setFare(request.getFare());
-        record.setPickupTimestamp(request.getPickupTimestamp());
         Query query = new Query(Criteria.where("_id").is(driverId));
         Update update = new Update()
                 .push("activeTrips", record)
