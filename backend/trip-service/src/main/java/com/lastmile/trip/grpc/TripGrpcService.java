@@ -53,7 +53,14 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
         
         try {
             Trip trip = new Trip();
-            String tripId = UUID.randomUUID().toString();
+            String tripId = matchId;
+            if (tripId == null || tripId.isEmpty()) {
+                responseBuilder.setSuccess(false)
+                        .setMessage("match_id is required");
+                responseObserver.onNext(responseBuilder.build());
+                responseObserver.onCompleted();
+                return;
+            }
             trip.setTripId(tripId);
             trip.setDriverId(driverId);
             trip.setRiderId(riderId);
@@ -61,7 +68,6 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setDestination(destination);
             trip.setStatus(Trip.TripStatus.SCHEDULED);
             trip.setCreatedAt(System.currentTimeMillis());
-            trip.setMatchId(matchId);
             trip.setFare(fare);
             
             trip = tripRepository.save(trip);

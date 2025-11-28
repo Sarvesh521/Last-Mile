@@ -13,8 +13,7 @@ public class Match {
     private String riderId;
     private String pickupStation;
     private String destination;
-    private String tripId;
     private String status; // PENDING, MATCHED, CONFIRMED, CANCELLED
-    private double fare;
+    private int fare;
     private long timestamp;
 }

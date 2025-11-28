@@ -52,6 +52,32 @@ export interface LatLng {
   longitude: number;
 }
 
+export interface RegisterRoutePayload {
+  destination: string;
+  availableSeats: number;
+  metroStations: string[];
+}
+
+export interface RegisterRideRequestPayload {
+  riderId: string;
+  metroStation: string;
+  destination: string;
+  arrivalTime: number;
+}
+
+export interface MatchRiderPayload {
+  riderId: string;
+  rideRequestId: string;
+  metroStation: string;
+  destination: string;
+  arrivalTime: number;
+}
+
+export interface CancelMatchPayload {
+  matchId: string;
+  riderId: string;
+}
+
 export const userApi = {
   register: (data: RegisterPayload) => api.post('/user/register', data),
   login: (data: LoginPayload) => api.post('/user/login', data),
@@ -61,40 +87,39 @@ export const userApi = {
 
 export const stationApi = {
   getStationsAlongRoute: (origin: string, destination: string, routePoints: LatLng[]) =>
-    api.post('/station/route', { origin, destination, route_points: routePoints}),
+    api.post('/station/route', { origin, destination, routePoints }),
   getAllStations: () => api.get('/station'),
 };
 
 export const driverApi = {
-  registerRoute: (data: any) => api.post('/driver/register-route', data),
-  updateLocation: (driverId: string, data: any) => api.post(`/driver/${driverId}/location`, data),
-  getDriverInfo: (driverId: string) => api.get(`/driver/${driverId}`),
+  registerRoute: (driverId: string, data: RegisterRoutePayload) => api.post(`/driver/${driverId}/register-route`, data),
+  updateLocation: (driverId: string, data: { latitude: number; longitude: number }) => api.post(`/driver/${driverId}/location`, data),
   getDashboard: (driverId: string) => api.get(`/driver/dashboard/${driverId}`),
-  rateRider: (data: any) => api.post(`/driver/${data.driverId}/rate-rider`, data),
 };
 
 export const riderApi = {
-  registerRideRequest: (data: any) => api.post('/rider/ride-request', data),
-  getRideStatus: (rideRequestId: string) => api.get(`/rider/ride-request/${rideRequestId}`),
-  cancelRideRequest: (rideRequestId: string) => api.post(`/rider/ride-request/${rideRequestId}/cancel`),
+  registerRideRequest: (riderId: string, data: RegisterRideRequestPayload) => api.post(`/rider/ride-register/${riderId}`, data),
+  getRideStatus: (riderId: string) => api.get(`/rider/ride-status/${riderId}`),
   listRideRequests: (riderId: string) => api.get(`/rider/ride-requests/${riderId}`),
-  deleteRideRequest: (rideRequestId: string) => api.delete(`/rider/ride-request/${rideRequestId}`),
-  rateRider: (data: any) => api.post(`/rider/${data.riderId}/rate`, data),
+  getDashboard: (riderId: string) => api.get(`/rider/dashboard/${riderId}`),
 };
 
 export const matchingApi = {
-  matchRiderWithDriver: (data: any) => api.post('/match', data),
+  matchRiderWithDriver: (data: MatchRiderPayload) => api.post('/match', data),
   getMatchStatus: (matchId: string) => api.get(`/match/${matchId}`),
+  acceptMatch: (matchId: string, data: { driverId: string }) => api.post(`/match/${matchId}/accept`, data),
+  declineMatch: (matchId: string, data: { driverId: string }) => api.post(`/match/${matchId}/decline`, data),
+  cancelMatch: (matchId: string, data: CancelMatchPayload) => api.post(`/match/${matchId}/cancel`, data),
 };
 
 export const tripApi = {
   getTripInfo: (tripId: string) => api.get(`/trip/${tripId}`),
-  recordPickup: (tripId: string, data: any) => api.post(`/trip/${tripId}/pickup`, data),
-  recordDropoff: (tripId: string, data: any) => api.post(`/trip/${tripId}/dropoff`, data),
+  recordPickup: (tripId: string, data: { latitude: number; longitude: number }) => api.post(`/trip/${tripId}/pickup`, data),
+  recordDropoff: (tripId: string, data: { latitude: number; longitude: number; fare?: number }) => api.post(`/trip/${tripId}/dropoff`, data),
 };
 
 export const locationApi = {
-  updateLocation: (driverId: string, data: any) => api.post(`/location/${driverId}`, data),
+  updateLocation: (driverId: string, data: { latitude: number; longitude: number }) => api.post(`/location/${driverId}`, data),
   findNearbyDrivers: (latitude: number, longitude: number, radiusKm: number) =>
     api.get(`/location/nearby?latitude=${latitude}&longitude=${longitude}&radiusKm=${radiusKm}`),
 };

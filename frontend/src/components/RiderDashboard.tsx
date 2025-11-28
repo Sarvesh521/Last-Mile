@@ -130,11 +130,11 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
           return Math.floor(Date.now() / 1000);
         }
       })();
-      const reg = await riderApi.registerRideRequest({
-        rider_id: user.id,
-        metro_station: metroStation,
+      const reg = await riderApi.registerRideRequest(user.id, {
+        riderId: user.id,
+        metroStation,
         destination,
-        arrival_time: arrivalEpoch,
+        arrivalTime: arrivalEpoch,
       });
       const respData = reg?.data || {};
       console.debug('Ride request raw response', respData);
@@ -162,11 +162,10 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
       // 2) Request matching
       const matchResp = await matchingApi.matchRiderWithDriver({
-        ride_request_id,
-        rider_id: user.id,
-        metro_station: metroStation,
+        riderId: user.id,
+        metroStation,
         destination,
-        arrival_time: arrivalEpoch,
+        arrivalTime: arrivalEpoch,
       });
       const matchId = matchResp?.data?.match_id || ride_request_id;
 
@@ -182,7 +181,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
             const driverId = data.driver_id || data.driverId;
             const tripId = data.trip_id || data.tripId;
             let driverInfo: any = null;
-            try { driverInfo = (await driverApi.getDriverInfo(driverId)).data; } catch {}
+            try { driverInfo = (await driverApi.getDashboard(driverId)).data; } catch {}
 
             const matchedRide = {
               ...pendingRide,
@@ -194,9 +193,9 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                 vehicle: '—',
                 rating: 4.8,
                 phone: '',
-                currentLocation: driverInfo?.current_location ? {
-                  latitude: driverInfo.current_location.latitude,
-                  longitude: driverInfo.current_location.longitude,
+                currentLocation: driverInfo?.currentLocation ? {
+                  latitude: driverInfo.currentLocation.latitude,
+                  longitude: driverInfo.currentLocation.longitude,
                 } : undefined,
               },
             };
@@ -260,15 +259,20 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
   const handleCancelRide = async (rideId: string) => {
     try {
-      await riderApi.deleteRideRequest(rideId);
+      await matchingApi.cancelMatch(rideId, {
+        matchId: rideId,
+        riderId: user.id
+      });
+      
       setRides(prev => prev.filter((ride: any) => ride.id !== rideId));
       if (activeRide?.id === rideId) {
         setActiveRide(null);
         setRideAccepted(false);
         setInRide(false);
       }
-      toast.success('Ride cancelled');
+      toast.success('Ride request cancelled successfully');
     } catch (error: any) {
+      console.error("Cancel error:", error);
       toast.error('Failed to cancel ride');
     }
   };

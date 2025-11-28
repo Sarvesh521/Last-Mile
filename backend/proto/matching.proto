@@ -45,9 +45,10 @@ service MatchingService {
 
 message MatchRiderWithDriverRequest {
   string rider_id = 1;
-  string metro_station = 2;
-  string destination = 3;
-  int64 arrival_time = 4;
+  string ride_request_id = 2;
+  string metro_station = 3;
+  string destination = 4;
+  int64 arrival_time = 5;
 }
 
 message MatchRiderWithDriverResponse {
@@ -85,7 +86,6 @@ message AcceptMatchRequest {
 message AcceptMatchResponse {
   bool success = 1;
   string message = 2;
-  string trip_id = 3;
 }
 
 message DeclineMatchRequest {

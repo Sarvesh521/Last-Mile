@@ -11,7 +11,7 @@ import { MapView, PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useLoadScript } from '@react-google-maps/api';
-import { driverApi, locationApi, riderApi } from '../lib/api';
+import { driverApi, locationApi, riderApi, tripApi, stationApi } from '../lib/api';
 
 // Define libraries outside component to prevent re-renders
 const libraries: ("places")[] = ["places"];
@@ -174,12 +174,50 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     try {
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       
-      await driverApi.registerRoute({
-        driver_id: user.id,
-        origin_station: '',
+      // 1. Calculate Route & Get Stations
+      let metroStations: string[] = [];
+      if (isLoaded && window.google) {
+        try {
+          const directionsService = new window.google.maps.DirectionsService();
+          const result = await new Promise<google.maps.DirectionsResult | null>((resolve) => {
+            directionsService.route({
+              origin: currentLocation,
+              destination: destinationCoords || destination,
+              travelMode: window.google.maps.TravelMode.DRIVING,
+            }, (res, status) => {
+              if (status === window.google.maps.DirectionsStatus.OK) {
+                resolve(res);
+              } else {
+                console.warn("Directions request failed:", status);
+                resolve(null);
+              }
+            });
+          });
+
+          if (result && result.routes[0]?.overview_path) {
+            const points = result.routes[0].overview_path.map(p => ({
+              latitude: p.lat(),
+              longitude: p.lng()
+            }));
+
+            const originStr = `${currentLocation.lat},${currentLocation.lng}`;
+            const { data: stationData } = await stationApi.getStationsAlongRoute(originStr, destination, points);
+            
+            if (stationData?.stations && Array.isArray(stationData.stations)) {
+              // Map to station names (or IDs depending on backend requirement)
+              metroStations = stationData.stations.map((s: any) => s.name);
+              toast.success(`Found ${metroStations.length} stations along your route.`);
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching stations along route:", err);
+        }
+      }
+
+      await driverApi.registerRoute(user.id, {
         destination,
-        available_seats: availableSeats,
-        metro_stations: [],
+        availableSeats,
+        metroStations: metroStations,
       });
       // Re-fetch dashboard to ensure persistence reflects backend state
       try {
@@ -268,7 +306,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
       try {
         const { lat, lng } = currentLocation;
-        await driverApi.updateLocation(user.id, { driver_id: user.id, latitude: lat, longitude: lng });
+        await driverApi.updateLocation(user.id, { latitude: lat, longitude: lng });
         await locationApi.updateLocation(user.id, { latitude: lat, longitude: lng });
       } catch {
         // ignore
@@ -280,11 +318,18 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
   const handlePickup = async (tripId: string) => {
     try {
+      // Call backend to record pickup
+      await tripApi.recordPickup(tripId, {
+        latitude: currentLocation.lat,
+        longitude: currentLocation.lng
+      });
+
       setTrips(prev => prev.map(trip =>
         trip.id === tripId ? { ...trip, status: 'active' } : trip
       ));
       toast.success('Pickup confirmed!');
     } catch (error) {
+      console.error("Pickup error:", error);
       toast.error('Failed to confirm pickup');
     }
   };
@@ -294,6 +339,12 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     if (!trip) return;
 
     try {
+      // Call backend to record dropoff
+      await tripApi.recordDropoff(tripId, {
+        latitude: currentLocation.lat,
+        longitude: currentLocation.lng
+      });
+
       setTrips(prev => prev.map(t =>
         t.id === tripId ? { ...t, status: 'completed' } : t
       ));
@@ -324,25 +375,25 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
     try {
       // 1. Update Driver Service (Record that we gave a rating)
-      await driverApi.rateRider({
-        driverId: user.id,
-        tripId: selectedRiderForRating.id,
-        rating: rating,
-        feedback: feedback
-      });
+      // await driverApi.rateRider({
+      //   driverId: user.id,
+      //   tripId: selectedRiderForRating.id,
+      //   rating: rating,
+      //   feedback: feedback
+      // });
 
       // 2. Update Rider Service (Actually affect the rider's score)
       // Note: We need the riderId. In the current trips mock/data, we need to ensure riderId is present.
       // The trip object from getDashboard has riderName but might not have riderId if not mapped correctly.
       // Assuming selectedRiderForRating has riderId (mapped in fetchDashboard).
       if (selectedRiderForRating.riderId) {
-        await riderApi.rateRider({
-          riderId: selectedRiderForRating.riderId,
-          rating: rating
-        });
+        // await riderApi.rateRider({
+        //   riderId: selectedRiderForRating.riderId,
+        //   rating: rating
+        // });
       }
 
-      toast.success(`Rated ${selectedRiderForRating.riderName} successfully!`);
+      toast.success(`Rated ${selectedRiderForRating.riderName} successfully! (Local only)`);
     } catch (error) {
       console.error("Rating error:", error);
       // Even if one fails, we might want to show success if at least one worked, 

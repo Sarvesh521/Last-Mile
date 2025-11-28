@@ -30,7 +30,6 @@ message SendMatchNotificationRequest {
   string driver_id = 1;
   string rider_id = 2;
   string match_id = 3;
-  string trip_id = 4;
 }
 
 message SendMatchNotificationResponse {

@@ -53,6 +53,7 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
         String riderId = request.getRiderId();
         String metroStation = request.getMetroStation();
         String destination = request.getDestination();
+        String rideRequestId = request.getRideRequestId();
         
         MatchRiderWithDriverResponse.Builder responseBuilder = MatchRiderWithDriverResponse.newBuilder();
         
@@ -63,7 +64,14 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                 responseBuilder.setSuccess(false)
                         .setMessage("No matching driver found");
             } else {
-                String matchId = UUID.randomUUID().toString();
+                String matchId = rideRequestId;
+                if (matchId == null || matchId.isEmpty()) {
+                    responseBuilder.setSuccess(false)
+                            .setMessage("ride_request_id is required");
+                    responseObserver.onNext(responseBuilder.build());
+                    responseObserver.onCompleted();
+                    return;
+                }
                 int fare = calculateFare(metroStation, matchedDriver);
                 
                 Match match = new Match();
@@ -112,19 +120,17 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                             .setPickupStation(match.getPickupStation())
                             .setDestination(match.getDestination())
                             .setMatchId(matchId)
-                            .setFare((int)match.getFare())
+                            .setFare(match.getFare())
                             .build();
                     
                     CreateTripResponse tripResponse = attachToken(tripStub).createTrip(tripRequest);
                     
                     if (tripResponse.getSuccess()) {
                         match.setStatus("CONFIRMED");
-                        match.setTripId(tripResponse.getTripId());
                         matchRepository.save(match);
                         
                         responseBuilder.setSuccess(true)
-                                .setMessage("Match accepted and trip created")
-                                .setTripId(tripResponse.getTripId());
+                                .setMessage("Match accepted and trip created");
                     } else {
                         responseBuilder.setSuccess(false)
                                 .setMessage("Failed to create trip: " + tripResponse.getMessage());
@@ -205,7 +211,6 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                     .setDriverId(match.getDriverId())
                     .setRiderId(match.getRiderId())
                     .setStatus(convertStatus(match.getStatus()))
-                    .setTripId(match.getTripId() != null ? match.getTripId() : "")
                     .setSuccess(true);
         } else {
             responseBuilder.setSuccess(false);
@@ -322,7 +327,6 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                     .setDriverId(driverId)
                     .setRiderId(riderId)
                     .setMatchId(matchId)
-                    .setTripId("") 
                     .build()
             );
         } catch (Exception e) {

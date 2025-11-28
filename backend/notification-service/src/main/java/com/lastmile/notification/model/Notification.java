@@ -14,5 +14,4 @@ public class Notification implements Serializable {
     private String type;
     private long timestamp;
     private String matchId;
-    private String tripId;
 }

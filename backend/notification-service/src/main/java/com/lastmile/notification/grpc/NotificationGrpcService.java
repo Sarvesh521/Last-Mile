@@ -44,10 +44,9 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
         String driverId = request.getDriverId();
         String riderId = request.getRiderId();
         String matchId = request.getMatchId();
-        String tripId = request.getTripId();
         
-        String driverMessage = "You have been matched with a rider. Trip ID: " + tripId;
-        String riderMessage = "You have been matched with a driver. Trip ID: " + tripId;
+        String driverMessage = "You have been matched with a rider. Match ID: " + matchId;
+        String riderMessage = "You have been matched with a driver. Match ID: " + matchId;
         
         Notification driverNotification = new Notification();
         driverNotification.setUserId(driverId);
@@ -55,7 +54,6 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
         driverNotification.setType("MATCH");
         driverNotification.setTimestamp(System.currentTimeMillis());
         driverNotification.setMatchId(matchId);
-        driverNotification.setTripId(tripId);
         
         Notification riderNotification = new Notification();
         riderNotification.setUserId(riderId);
@@ -63,7 +61,6 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
         riderNotification.setType("MATCH");
         riderNotification.setTimestamp(System.currentTimeMillis());
         riderNotification.setMatchId(matchId);
-        riderNotification.setTripId(tripId);
         
         redisTemplate.opsForList().rightPush("notifications:" + driverId, driverNotification);
         redisTemplate.opsForList().rightPush("notifications:" + riderId, riderNotification);
