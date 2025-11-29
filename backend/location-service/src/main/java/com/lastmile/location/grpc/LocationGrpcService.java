@@ -14,6 +14,9 @@ public class LocationGrpcService extends LocationServiceGrpc.LocationServiceImpl
     
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
+
+    @Autowired
+    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
     
     private static final double EARTH_RADIUS_KM = 6371.0;
     
@@ -32,6 +35,11 @@ public class LocationGrpcService extends LocationServiceGrpc.LocationServiceImpl
         
         redisTemplate.opsForHash().putAll(key, locationData);
         redisTemplate.expire(key, java.time.Duration.ofHours(1));
+
+        // Publish to Redis Channel for streaming
+        String channel = "driver-location:" + driverId;
+        String message = latitude + "," + longitude;
+        redisTemplate.convertAndSend(channel, message);
         
         UpdateLocationResponse response = UpdateLocationResponse.newBuilder()
                 .setSuccess(true)
@@ -40,6 +48,43 @@ public class LocationGrpcService extends LocationServiceGrpc.LocationServiceImpl
         
         responseObserver.onNext(response);
         responseObserver.onCompleted();
+    }
+
+    @Override
+    public void monitorDriverLocation(MonitorDriverLocationRequest request,
+                                      StreamObserver<DriverLocation> responseObserver) {
+        String driverId = request.getDriverId();
+        String channel = "driver-location:" + driverId;
+        
+        io.grpc.stub.ServerCallStreamObserver<DriverLocation> serverObserver = 
+            (io.grpc.stub.ServerCallStreamObserver<DriverLocation>) responseObserver;
+
+        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
+            String body = new String(message.getBody());
+            String[] parts = body.split(",");
+            if (parts.length == 2) {
+                try {
+                    double lat = Double.parseDouble(parts[0]);
+                    double lon = Double.parseDouble(parts[1]);
+                    DriverLocation location = DriverLocation.newBuilder()
+                            .setDriverId(driverId)
+                            .setLatitude(lat)
+                            .setLongitude(lon)
+                            .build();
+                    synchronized (responseObserver) {
+                        responseObserver.onNext(location);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        redisMessageListenerContainer.addMessageListener(listener, new org.springframework.data.redis.listener.ChannelTopic(channel));
+
+        serverObserver.setOnCancelHandler(() -> {
+            redisMessageListenerContainer.removeMessageListener(listener);
+        });
     }
     
     @Override

@@ -24,6 +24,12 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
     @Autowired
     private MatchRepository matchRepository;
 
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+
+    @Autowired
+    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
     @GrpcClient("driver-service")
     private DriverServiceGrpc.DriverServiceBlockingStub driverStub;
     
@@ -45,6 +51,19 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
         Metadata headers = new Metadata();
         headers.put(Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER), "Bearer " + token);
         return MetadataUtils.attachHeaders(stub, headers);
+    }
+
+    private void publishMatchUpdate(String riderId, String matchId, String status, String driverId, String tripId) {
+        String channel = "match-status:" + riderId;
+        String message = matchId + "," + status + "," + (driverId != null ? driverId : "") + "," + (tripId != null ? tripId : "");
+        redisTemplate.convertAndSend(channel, message);
+    }
+
+    private void publishDriverMatchRequest(String driverId, String matchId, String riderId, String pickup, String dest, int fare) {
+        String channel = "driver-dashboard:" + driverId;
+        String message = "MATCH_REQUEST," + matchId + "::" + riderId + "::" + pickup + "::" + fare + "::" + dest;
+        System.out.println("DEBUG: Publishing MATCH_REQUEST to " + channel + ": " + message);
+        redisTemplate.convertAndSend(channel, message);
     }
     
     @Override
@@ -79,13 +98,15 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                 match.setDriverId(matchedDriver.getDriverId());
                 match.setRiderId(riderId);
                 match.setPickupStation(metroStation);
+                match.setFare(fare);
                 match.setDestination(destination);
                 match.setStatus("MATCHED");
-                match.setFare(fare);
                 match.setTimestamp(System.currentTimeMillis());
                 matchRepository.save(match);
 
                 notifyDriver(matchedDriver.getDriverId(), riderId, matchId);
+                publishMatchUpdate(riderId, matchId, "MATCHED", matchedDriver.getDriverId(), null);
+                publishDriverMatchRequest(matchedDriver.getDriverId(), matchId, riderId, metroStation, destination, fare);
                 
                 responseBuilder.setMatchId(matchId)
                         .setDriverId(matchedDriver.getDriverId())
@@ -100,6 +121,53 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
         responseObserver.onNext(responseBuilder.build());
         responseObserver.onCompleted();
     }
+
+    @Override
+    public void monitorMatchStatus(MonitorMatchStatusRequest request,
+                                   StreamObserver<MonitorMatchStatusResponse> responseObserver) {
+        String riderId = request.getRiderId();
+        String channel = "match-status:" + riderId;
+        
+        io.grpc.stub.ServerCallStreamObserver<MonitorMatchStatusResponse> serverObserver = 
+            (io.grpc.stub.ServerCallStreamObserver<MonitorMatchStatusResponse>) responseObserver;
+
+        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
+            String body = new String(message.getBody());
+            String[] parts = body.split(",");
+            if (parts.length >= 2) {
+                try {
+                    String matchId = parts[0];
+                    String statusStr = parts[1];
+                    String driverId = parts.length > 2 ? parts[2] : "";
+                    String tripId = parts.length > 3 ? parts[3] : "";
+                    
+                    MatchStatus status = MatchStatus.PENDING;
+                    try { status = MatchStatus.valueOf(statusStr); } catch (Exception e) {}
+
+                    MonitorMatchStatusResponse response = MonitorMatchStatusResponse.newBuilder()
+                            .setMatchId(matchId)
+                            .setStatus(status)
+                            .setDriverId(driverId)
+                            .setTripId(tripId)
+                            .setSuccess(true)
+                            .build();
+                            
+                    synchronized (responseObserver) {
+                        responseObserver.onNext(response);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        redisMessageListenerContainer.addMessageListener(listener, new org.springframework.data.redis.listener.ChannelTopic(channel));
+
+        serverObserver.setOnCancelHandler(() -> {
+            redisMessageListenerContainer.removeMessageListener(listener);
+        });
+    }
+
 
     @Override
     public void acceptMatch(AcceptMatchRequest request, StreamObserver<AcceptMatchResponse> responseObserver) {
@@ -128,6 +196,7 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                     if (tripResponse.getSuccess()) {
                         match.setStatus("CONFIRMED");
                         matchRepository.save(match);
+                        publishMatchUpdate(match.getRiderId(), matchId, "CONFIRMED", match.getDriverId(), tripResponse.getTripId());
                         
                         responseBuilder.setSuccess(true)
                                 .setMessage("Match accepted and trip created");
@@ -225,6 +294,8 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                                          StreamObserver<CancelMatchResponse> responseObserver) {
         String matchId = request.getMatchId();
         String riderId = request.getRiderId();
+        System.out.println("DEBUG: Received CancelMatchRequestByRider for matchId: " + matchId + ", riderId: " + riderId);
+        long startTime = System.currentTimeMillis();
         
         CancelMatchResponse.Builder responseBuilder = CancelMatchResponse.newBuilder();
         
@@ -234,6 +305,7 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                 Match match = matchOpt.get();
                 match.setStatus("CANCELLED");
                 matchRepository.save(match);
+                publishMatchUpdate(riderId, matchId, "CANCELLED", null, null);
                 responseBuilder.setSuccess(true)
                         .setMessage("Match cancelled successfully"); 
 
@@ -244,8 +316,9 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                             .setRiderId(riderId)
                             .build()
                     );
+                    System.out.println("DEBUG: Called riderStub.cancelRideRequest");
                 } catch (Exception e) {
-                    System.err.println("Failed to cancel ride request in RiderService: " + e.getMessage());
+                    System.err.println("DEBUG: Failed to cancel ride request in RiderService: " + e.getMessage());
                 }
                 
             } 
@@ -253,7 +326,12 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                 responseBuilder.setSuccess(false)
                         .setMessage("Match not found");
             }
+            
+            long duration = System.currentTimeMillis() - startTime;
+            System.out.println("DEBUG: CancelMatchRequestByRider completed in " + duration + "ms");
+
         } catch (Exception e) {
+            System.err.println("DEBUG: Error cancelling match: " + e.getMessage());
             responseBuilder.setSuccess(false)
                     .setMessage("Error cancelling match: " + e.getMessage());
         }
@@ -272,6 +350,7 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
     }
 
     private com.lastmile.driver.proto.DriverInfo findDriver(String pickupStation, String destination, String excludeDriverId) {
+        System.out.println("DEBUG: Finding driver for station: " + pickupStation + ", destination: " + destination);
         try {
             ListDriversRequest listRequest = ListDriversRequest.newBuilder()
                 .setStation(pickupStation)
@@ -280,19 +359,34 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
             com.lastmile.driver.proto.ListDriversResponse listResponse = attachToken(driverStub).listDrivers(listRequest);
             
             if (listResponse.getSuccess()) {
+                System.out.println("DEBUG: Found " + listResponse.getDriversCount() + " drivers at station " + pickupStation);
                 for (com.lastmile.driver.proto.DriverInfo driver : listResponse.getDriversList()) {
-                    if (driver.getDestination().equalsIgnoreCase(destination) &&
+                    System.out.println("DEBUG: Checking driver: " + driver.getDriverId() + ", Dest: " + driver.getDestination() + ", Seats: " + driver.getAvailableSeats());
+                    
+                    String driverDest = driver.getDestination().toLowerCase();
+                    String riderDest = destination.toLowerCase();
+                    
+                    // Relaxed matching: check if one contains the other
+                    boolean destMatch = driverDest.equals(riderDest) || driverDest.contains(riderDest) || riderDest.contains(driverDest);
+                    
+                    if (destMatch &&
                         driver.getAvailableSeats() > 0 &&
                         driver.getMetroStationsList().contains(pickupStation)) {
                         
                         if (excludeDriverId == null || !driver.getDriverId().equals(excludeDriverId)) {
+                            System.out.println("DEBUG: >> Match found: " + driver.getDriverId());
                             return driver;
                         }
+                    } else {
+                         System.out.println("DEBUG: >> Driver " + driver.getDriverId() + " did not match. DestMatch: " + destMatch);
                     }
                 }
+            } else {
+                System.out.println("DEBUG: ListDrivers failed: " + listResponse.getSuccess());
             }
         } catch (Exception e) {
-            System.err.println("Error finding driver: " + e.getMessage());
+            System.err.println("DEBUG: Error finding driver: " + e.getMessage());
+            e.printStackTrace();
         }
         return null;
     }
@@ -321,6 +415,7 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
     }
 
     private void notifyDriver(String driverId, String riderId, String matchId) {
+        System.out.println("DEBUG: Notifying driver: " + driverId + ", rider: " + riderId + ", match: " + matchId);
         try {
             attachToken(notificationStub).sendMatchNotification(
                 SendMatchNotificationRequest.newBuilder()

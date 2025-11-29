@@ -150,6 +150,14 @@ services:
       - DRIVER_SERVICE_PORT=50053
       - TRIP_SERVICE_HOST=trip-service
       - TRIP_SERVICE_PORT=50057
+      - STATION_SERVICE_HOST=station-service
+      - STATION_SERVICE_PORT=50051
+      - RIDER_SERVICE_HOST=rider-service
+      - RIDER_SERVICE_PORT=50054
+      - NOTIFICATION_SERVICE_HOST=notification-service
+      - NOTIFICATION_SERVICE_PORT=50058
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
@@ -172,6 +180,14 @@ services:
     environment:
       - MONGODB_HOST=mongodb
       - MONGODB_PORT=27017
+      - RIDER_SERVICE_HOST=rider-service
+      - RIDER_SERVICE_PORT=50054
+      - DRIVER_SERVICE_HOST=driver-service
+      - DRIVER_SERVICE_PORT=50053
+      - NOTIFICATION_SERVICE_HOST=notification-service
+      - NOTIFICATION_SERVICE_PORT=50058
+      - USER_SERVICE_HOST=user-service
+      - USER_SERVICE_PORT=50052
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
@@ -222,8 +238,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     image: lastmile/new-frontend:latest
     container_name: lastmile-frontend
     ports:

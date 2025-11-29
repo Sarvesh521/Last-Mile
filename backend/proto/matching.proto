@@ -41,6 +41,24 @@ service MatchingService {
       body: "*"
     };
   };
+
+  // Server-side streaming for match status updates
+  rpc MonitorMatchStatus(MonitorMatchStatusRequest) returns (stream MonitorMatchStatusResponse);
+}
+
+message MonitorMatchStatusRequest {
+  string match_id = 1;
+  string rider_id = 2;
+}
+
+message MonitorMatchStatusResponse {
+  string match_id = 1;
+  string driver_id = 2;
+  string rider_id = 3;
+  MatchStatus status = 4;
+  string trip_id = 5;
+  bool success = 6;
+  string message = 7;
 }
 
 message MatchRiderWithDriverRequest {

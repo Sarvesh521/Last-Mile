@@ -25,7 +25,7 @@ static_resources:
                           - exact: "http://localhost:3000"
                         allow_methods: "GET, POST, PUT, DELETE, OPTIONS"
                         # prefer explicit header list instead of "*"
-                        allow_headers: "content-type,authorization"
+                        allow_headers: "content-type,authorization,x-user-agent,x-grpc-web"
                         expose_headers: "grpc-status,grpc-message"
                         max_age: "86400"
                         allow_credentials: true
@@ -48,16 +48,17 @@ static_resources:
                                 value: "GET, POST, PUT, DELETE, OPTIONS"
                             - header:
                                 key: "Access-Control-Allow-Headers"
-                                value: "content-type,authorization"
+                                value: "content-type,authorization,x-user-agent,x-grpc-web"
                             - header:
                                 key: "Access-Control-Allow-Credentials"
                                 value: "true"
 
-                        # 3) gRPC prefix routes (for grpc/grpc-web clients) — keep their CORS headers too
+                        # 3) gRPC prefix routes (for grpc/grpc-web clients)
                         - match:
                             prefix: "/com.lastmile.user.proto.UserService"
                           route:
                             cluster: user-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -71,6 +72,7 @@ static_resources:
                             prefix: "/com.lastmile.station.proto.StationService"
                           route:
                             cluster: station-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -84,6 +86,7 @@ static_resources:
                             prefix: "/com.lastmile.driver.proto.DriverService"
                           route:
                             cluster: driver-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -97,6 +100,7 @@ static_resources:
                             prefix: "/com.lastmile.rider.proto.RiderService"
                           route:
                             cluster: rider-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -110,6 +114,7 @@ static_resources:
                             prefix: "/com.lastmile.trip.proto.TripService"
                           route:
                             cluster: trip-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -123,6 +128,7 @@ static_resources:
                             prefix: "/com.lastmile.matching.proto.MatchingService"
                           route:
                             cluster: matching-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -136,6 +142,21 @@ static_resources:
                             prefix: "/com.lastmile.notification.proto.NotificationService"
                           route:
                             cluster: notification-service
+                            timeout: 0s
+                            cors: {}
+                          response_headers_to_add:
+                            - header:
+                                key: "Access-Control-Allow-Origin"
+                                value: "http://localhost:3000"
+                            - header:
+                                key: "Access-Control-Allow-Credentials"
+                                value: "true"
+
+                        - match:
+                            prefix: "/com.lastmile.location.proto.LocationService"
+                          route:
+                            cluster: location-service
+                            timeout: 0s
                             cors: {}
                           response_headers_to_add:
                             - header:
@@ -146,10 +167,13 @@ static_resources:
                                 value: "true"
 
                 http_filters:
-                  # CORS filter must come first
                   - name: envoy.filters.http.cors
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+
+                  - name: envoy.filters.http.grpc_web
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
 
                   - name: envoy.filters.http.grpc_json_transcoder
                     typed_config:

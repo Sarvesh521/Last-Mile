@@ -3,14 +3,18 @@ FROM node:18-bullseye AS build
 
 WORKDIR /app
 
+# Copy package files
+COPY frontend/package*.json ./
+
 # Install dependencies
-COPY package*.json ./
 RUN npm install
 
-# Copy the rest of the app source
-COPY . .
+# Copy source code (including generated protos in src/proto)
+# NOTE: You must run ./generate-proto.sh locally before building this image
+# to ensure frontend/src/proto is populated with the latest definitions.
+COPY frontend/ .
 
-# Build the Vite app (outputs to build/ by default in this project)
+# Build the Vite app
 RUN npm run build
 
 # Production stage
@@ -20,7 +24,7 @@ FROM nginx:alpine
 COPY --from=build /app/build /usr/share/nginx/html
 
 # Copy nginx configuration for SPA routing
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose port 80
 EXPOSE 80

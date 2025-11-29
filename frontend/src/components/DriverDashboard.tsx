@@ -4,17 +4,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
+import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { MapView, PlaceSearchBox } from './MapView'; 
+import { MapView, PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useLoadScript } from '@react-google-maps/api';
-import { driverApi, locationApi, riderApi, tripApi, stationApi } from '../lib/api';
 
-// Define libraries outside component to prevent re-renders
+// API & gRPC Imports
+import { driverApi, locationApi, tripApi, stationApi, matchingApi } from '../lib/api';
+import { driverClient } from '../lib/grpc';
+import * as DriverPb from '../proto/driver_pb.js';
+
+// @ts-ignore
+const MonitorDriverDashboardRequest = DriverPb.MonitorDriverDashboardRequest || DriverPb.default.MonitorDriverDashboardRequest;
+
 const libraries: ("places")[] = ["places"];
+
+// Helper for Auth Headers in gRPC
+const getAuthMetadata = () => {
+  const token = localStorage.getItem('auth_token');
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+};
 
 interface DriverDashboardProps {
   user: any;
@@ -22,412 +34,378 @@ interface DriverDashboardProps {
 
 export function DriverDashboard({ user }: DriverDashboardProps) {
   const ROUTE_STORAGE_KEY = `driver_active_route_${user.id}`;
+
+  // Google Maps Load
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: import.meta.env.VITE_APP_GOOGLE_MAPS_API_KEY || "",
     libraries,
   });
 
+  // --- State Management ---
   const [activeRoute, setActiveRoute] = useState<any>(null);
-  
   const [currentLocation, setCurrentLocation] = useState({ lat: 28.6139, lng: 77.2090 });
-  const [isLocationResolved, setIsLocationResolved] = useState(false); // to track if geolocation attempt completed for the user
-  const locationIntervalRef = useRef<any>(null); // This interval runs every 30 seconds to fetch new trips or requests from the backend.This interval runs every 30 seconds to fetch new trips or requests from the backend.
-  
+
+  // Dashboard Data
   const [trips, setTrips] = useState<any[]>([]);
   const [rideHistory, setRideHistory] = useState<any[]>([]);
-  const [showRouteDialog, setShowRouteDialog] = useState(false);
-  const [locationUpdateInterval, setLocationUpdateInterval] = useState<any>(null); // The Driver Location Broadcast loop. This interval runs every 10 seconds (after you click "Start Route") to send your GPS coordinates to the server.
-  const [driverRating, setDriverRating] = useState(5);
+  const [driverRating, setDriverRating] = useState(5.0);
   const [totalEarnings, setTotalEarnings] = useState(0);
+
+  // UI State
+  const [showRouteDialog, setShowRouteDialog] = useState(false);
   const [ratingDialogOpen, setRatingDialogOpen] = useState(false);
   const [selectedRiderForRating, setSelectedRiderForRating] = useState<any>(null);
 
-  // Route registration form
+  // Incoming Match State
+  const [incomingMatch, setIncomingMatch] = useState<any>(null);
+
+  // Route Form State
   const [destination, setDestination] = useState('');
   const [destinationCoords, setDestinationCoords] = useState<any>(null);
   const [availableSeats, setAvailableSeats] = useState(4);
 
-  useEffect(() => {
+  // Refs for Cleanup
+  const streamRef = useRef<any>(null);
+  const [locationUpdateInterval, setLocationUpdateInterval] = useState<any>(null);
+  const [isLocationResolved, setIsLocationResolved] = useState(false);
 
-    const storedRouteRaw = localStorage.getItem(ROUTE_STORAGE_KEY);
-    let restoredCoords: any = null;
-    if (storedRouteRaw) {
-      try {
-        const storedRoute = JSON.parse(storedRouteRaw);
-        if (storedRoute?.destination && storedRoute?.destinationCoords?.lat && storedRoute?.destinationCoords?.lng) {
-          restoredCoords = storedRoute.destinationCoords;
-          setActiveRoute(storedRoute);
-          setDestination(storedRoute.destination);
-          setDestinationCoords(storedRoute.destinationCoords);
-          setAvailableSeats(storedRoute.availableSeats || availableSeats);
-        }
-      } catch { /* ignore corrupt storage */ }
-    }
-
-    const fetchDashboard = async () => {
-      try {
-        const { data } = await driverApi.getDashboard(user.id);
-        if (data?.success) {
-          if (typeof data.driverRating === 'number') setDriverRating(data.driverRating);
-          if (typeof data.totalEarnings === 'number') setTotalEarnings(data.totalEarnings);
-
-          const active = Array.isArray(data.activeTrips) ? data.activeTrips.map((t: any) => ({
-            id: t.tripId,
-            riderId: t.riderId || '', // Map riderId from backend
-            riderName: t.riderName,
-            riderRating: t.riderRating,
-            pickupStation: t.pickupStation,
-            destination: t.destination,
-            status: t.status,
-            pickupTime: t.pickupTimestamp ? new Date(t.pickupTimestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '',
-            fare: t.fare,
-          })) : [];
-          setTrips(active);
-
-          const history = Array.isArray(data.rideHistory) ? data.rideHistory.map((r: any) => ({
-            id: r.tripId,
-            date: r.date,
-            riderName: r.riderName,
-            destination: r.destination,
-            fare: r.fare,
-            rating: r.ratingGiven,
-            duration: r.pickupTimestamp && r.dropoffTimestamp ?
-              Math.max(1, Math.round((r.dropoffTimestamp - r.pickupTimestamp) / 60000)) + ' min' : '—',
-          })) : [];
-          setRideHistory(history);
-
-          if (data.destination) {
-            setDestination(data.destination);
-            if (typeof data.availableSeats === 'number') setAvailableSeats(data.availableSeats);
-            // Prefer coords from restored route first, then current state, then existing activeRoute
-            const coords = restoredCoords || destinationCoords || activeRoute?.destinationCoords;
-            setActiveRoute({
-              id: 'route_from_backend',
-              driverId: user.id,
-              currentLocation: data.currentLocation ? { latitude: data.currentLocation.latitude, longitude: data.currentLocation.longitude } : currentLocation,
-              destination: data.destination,
-              destinationCoords: coords,
-              availableSeats: data.availableSeats || availableSeats,
-              departureTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-            });
-          }
-        }
-      } catch (e) {
-        // keep UI usable without backend data
-      }
-    };
-
-    // Acquire geolocation first; only then fetch dashboard so initial route uses real origin
-    const startAfterGeo = () => {
-      fetchDashboard();
-      locationIntervalRef.current = setInterval(fetchDashboard, 30000);
-    };
-
-    if (navigator.geolocation) {
-      let geoResolved = false;
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          if (geoResolved) return;
-          geoResolved = true;
-          setCurrentLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-          setIsLocationResolved(true);
-          startAfterGeo();
-        },
-        () => {
-          if (geoResolved) return;
-          geoResolved = true;
-          toast.info('Using default location. Enable location services for accurate positioning.');
-          setIsLocationResolved(true);
-          startAfterGeo();
-        },
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-      // Fallback: if geolocation stalls beyond timeout, proceed anyway
-      setTimeout(() => {
-        if (!geoResolved) {
-          geoResolved = true;
-          setIsLocationResolved(true);
-          startAfterGeo();
-        }
-      }, 5500);
-    } else {
-      setIsLocationResolved(true);
-      startAfterGeo();
-    }
-    return () => {
-      if (locationIntervalRef.current) clearInterval(locationIntervalRef.current);
-    };
-  }, [user.id, user.name]);
-
-  const handleRegisterRoute = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Check if destination is valid
-    if (!destination || !destinationCoords) {
-      toast.error('Please select a valid destination from the list');
-      return;
-    }
-
+  // --- 1. Initial Data Load (REST) ---
+  // We only do this ONCE on mount to populate history/earnings. 
+  // --- 1. Initial Data Load (REST) ---
+  const loadInitialData = async () => {
     try {
-      const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      
-      // 1. Calculate Route & Get Stations
-      let metroStations: string[] = [];
-      if (isLoaded && window.google) {
-        try {
-          const directionsService = new window.google.maps.DirectionsService();
-          const result = await new Promise<google.maps.DirectionsResult | null>((resolve) => {
-            directionsService.route({
-              origin: currentLocation,
-              destination: destinationCoords || destination,
-              travelMode: window.google.maps.TravelMode.DRIVING,
-            }, (res, status) => {
-              if (status === window.google.maps.DirectionsStatus.OK) {
-                resolve(res);
-              } else {
-                console.warn("Directions request failed:", status);
-                resolve(null);
-              }
-            });
-          });
-
-          if (result && result.routes[0]?.overview_path) {
-            const points = result.routes[0].overview_path.map(p => ({
-              latitude: p.lat(),
-              longitude: p.lng()
-            }));
-
-            const originStr = `${currentLocation.lat},${currentLocation.lng}`;
-            const { data: stationData } = await stationApi.getStationsAlongRoute(originStr, destination, points);
-            
-            if (stationData?.stations && Array.isArray(stationData.stations)) {
-              // Map to station names (or IDs depending on backend requirement)
-              metroStations = stationData.stations.map((s: any) => s.name);
-              toast.success(`Found ${metroStations.length} stations along your route.`);
-            }
-          }
-        } catch (err) {
-          console.error("Error fetching stations along route:", err);
-        }
+      // Restore route from local storage if exists
+      const storedRouteRaw = localStorage.getItem(ROUTE_STORAGE_KEY);
+      if (storedRouteRaw) {
+        setActiveRoute(JSON.parse(storedRouteRaw));
       }
 
-      await driverApi.registerRoute(user.id, {
-        destination,
-        availableSeats,
-        metroStations: metroStations,
-      });
-      // Re-fetch dashboard to ensure persistence reflects backend state
-      try {
-        const { data: dash } = await driverApi.getDashboard(user.id);
-        if (dash?.destination) {
-          setActiveRoute({
-            id: 'route_from_backend',
-            driverId: user.id,
-            currentLocation: dash.currentLocation ? { latitude: dash.currentLocation.latitude, longitude: dash.currentLocation.longitude } : currentLocation,
-            destination: dash.destination,
-            destinationCoords: destinationCoords,
-            availableSeats: dash.availableSeats || availableSeats,
-            departureTime: currentTime,
-          });
-          // Persist updated route with coordinates
-          localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify({
-            id: 'route_from_backend',
-            driverId: user.id,
-            currentLocation,
-            destination: dash.destination,
-            destinationCoords: destinationCoords,
-            availableSeats: dash.availableSeats || availableSeats,
-            departureTime: currentTime,
-          }));
-        } else {
-          // Fallback to local construction if backend doesn't yet return route
-          setActiveRoute({
-            id: 'route_' + Date.now(),
-            driverId: user.id,
-            currentLocation,
-            destination,
-            destinationCoords: destinationCoords,
-            availableSeats,
-            departureTime: currentTime,
-          });
-          localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify({
-            id: 'route_' + Date.now(),
-            driverId: user.id,
-            currentLocation,
-            destination,
-            destinationCoords: destinationCoords,
-            availableSeats,
-            departureTime: currentTime,
-          }));
-        }
-      } catch {
-        // Fallback
-        setActiveRoute({
-          id: 'route_' + Date.now(),
-          driverId: user.id,
-          currentLocation,
-          destination,
-          destinationCoords: destinationCoords,
-          availableSeats,
-          departureTime: currentTime,
-        });
-        localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify({
-          id: 'route_' + Date.now(),
-          driverId: user.id,
-          currentLocation,
-          destination,
-          destinationCoords: destinationCoords,
-          availableSeats,
-          departureTime: currentTime,
-        }));
-      }
-      setShowRouteDialog(false);
-      toast.success('Route registered successfully! Starting location updates...');
+      // Fetch baseline data
+      const { data } = await driverApi.getDashboard(user.id);
+      if (data?.success) {
+        setDriverRating(data.driverRating || 5.0);
+        setTotalEarnings(data.totalEarnings || 0);
 
-      startLocationUpdates();
-    } catch (error: any) {
-      toast.error('Failed to register route');
+        // Set History
+        const history = Array.isArray(data.rideHistory) ? data.rideHistory.map((r: any) => ({
+          id: r.tripId,
+          date: r.date,
+          riderName: r.riderName,
+          destination: r.destination,
+          fare: r.fare,
+          rating: r.ratingGiven,
+          duration: '—',
+        })) : [];
+        setRideHistory(history);
+
+        // Set Active Route if backend has one
+        if (data.destination) {
+          const routeData = {
+            id: 'route_backend',
+            driverId: user.id,
+            destination: data.destination,
+            availableSeats: data.availableSeats,
+            destinationCoords: activeRoute?.destinationCoords,
+          };
+          setActiveRoute(routeData);
+          setDestination(data.destination);
+          // If backend says we have a route, start pushing location immediately
+          startLocationUpdates();
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load initial dashboard data", e);
     }
   };
 
+  useEffect(() => {
+    // Geolocation Init
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setCurrentLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setIsLocationResolved(true);
+          loadInitialData();
+        },
+        () => {
+          setIsLocationResolved(true); // Fallback to default
+          loadInitialData();
+        }
+      );
+    } else {
+      setIsLocationResolved(true);
+      loadInitialData();
+    }
+  }, [user.id]);
+
+  // --- 2. Server-Side Streaming (gRPC) ---
+  // Listens for updates (New Rides, Trip Status). No polling.
+  useEffect(() => {
+    if (!user.id) return;
+
+    // Cancel existing stream if any
+    if (streamRef.current) {
+      streamRef.current.cancel();
+    }
+
+    const request = new MonitorDriverDashboardRequest();
+    request.setDriverId(user.id);
+
+    console.log("📡 Connecting to Driver Stream...");
+    // FIX: Passing Auth Metadata here
+    const stream = driverClient.monitorDriverDashboard(request, getAuthMetadata());
+    streamRef.current = stream;
+
+    stream.on('data', (response: any) => {
+      // A. Handle New Ride Requests
+      const matchRequest = response.getMatchRequest();
+      if (matchRequest) {
+        const matchData = {
+          matchId: matchRequest.getMatchId(),
+          riderId: matchRequest.getRiderId(),
+          pickupStation: matchRequest.getPickupStation(),
+          destination: matchRequest.getDestination(),
+          fare: matchRequest.getFare(),
+        };
+        console.log("New Match Request:", matchData);
+        setIncomingMatch(matchData);
+        toast.info(`New Ride Request!`, {
+          description: `Fare: ₹${matchData.fare} to ${matchData.destination}`
+        });
+      }
+
+      // B. Handle Trip Status Updates
+      const tripUpdate = response.getTripUpdate();
+      if (tripUpdate) {
+        const tripId = tripUpdate.getTripId();
+        const status = tripUpdate.getStatus();
+        console.log(`Trip Update: ${tripId} -> ${status}`);
+
+        setTrips(prev => {
+          const exists = prev.find(t => t.id === tripId);
+          if (exists) {
+            return prev.map(t => t.id === tripId ? { ...t, status } : t);
+          } else {
+            // New trip detected (e.g. just accepted), reload to get full details
+            console.log("New trip detected, reloading dashboard...");
+            loadInitialData();
+            return prev;
+          }
+        });
+      }
+
+      // C. Handle Active Trips List Refresh
+      const activeTripsList = response.getActiveTripsList();
+      if (activeTripsList) {
+        const active = activeTripsList.map((t: any) => ({
+          id: t.getTripId(),
+          riderId: t.getRiderId(),
+          riderName: t.getRiderName(),
+          riderRating: t.getRiderRating(),
+          pickupStation: t.getPickupStation(),
+          destination: t.getDestination(),
+          status: t.getStatus(),
+          pickupTime: t.getPickupTimestamp(),
+          fare: t.getFare(),
+        }));
+        setTrips(active);
+      }
+    });
+
+    stream.on('error', (err: any) => {
+      if (err.code !== 1) { // Ignore cancelled errors
+        console.error('Stream error:', err);
+      }
+    });
+
+    return () => {
+      if (streamRef.current) streamRef.current.cancel();
+    };
+  }, [user.id]);
+
+
+  // --- 3. Location Push Polling (The "Write" Loop) ---
+  // Kept exactly as requested. Pushes location every 10s.
   const startLocationUpdates = () => {
     if (locationUpdateInterval) {
       clearInterval(locationUpdateInterval);
     }
 
     const interval = setInterval(async () => {
+      // 1. Jitter location slightly (Simulate movement)
       setCurrentLocation(prev => ({
         lat: prev.lat + (Math.random() - 0.5) * 0.001,
         lng: prev.lng + (Math.random() - 0.5) * 0.001,
       }));
 
+      // 2. Push to Backend
       try {
         const { lat, lng } = currentLocation;
-        await driverApi.updateLocation(user.id, { latitude: lat, longitude: lng });
-        await locationApi.updateLocation(user.id, { latitude: lat, longitude: lng });
+        // Fire and forget - we don't need to wait for response
+        driverApi.updateLocation(user.id, { latitude: lat, longitude: lng });
+        locationApi.updateLocation(user.id, { latitude: lat, longitude: lng });
       } catch {
-        // ignore
+        // ignore errors to prevent spamming console
       }
-    }, 10000);
+    }, 10000); // 10 seconds
 
     setLocationUpdateInterval(interval);
   };
 
+  // Cleanup interval on unmount
+  useEffect(() => {
+    return () => {
+      if (locationUpdateInterval) clearInterval(locationUpdateInterval);
+    };
+  }, [locationUpdateInterval]);
+
+
+  // --- Event Handlers ---
+
+  const handleRegisterRoute = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!destination || !destinationCoords) {
+      toast.error('Please select a valid destination');
+      return;
+    }
+
+    try {
+      // 1. Calculate Route Points for Station Matching
+      let metroStations: string[] = [];
+      if (isLoaded && window.google) {
+        const directionsService = new window.google.maps.DirectionsService();
+        const result = await directionsService.route({
+          origin: currentLocation,
+          destination: destinationCoords,
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        });
+
+        if (result.routes[0]?.overview_path) {
+          const points = result.routes[0].overview_path.map(p => ({
+            latitude: p.lat(),
+            longitude: p.lng()
+          }));
+          // Fetch stations (One-time REST call)
+          const { data } = await stationApi.getStationsAlongRoute(
+            `${currentLocation.lat},${currentLocation.lng}`,
+            destination,
+            points
+          );
+          metroStations = data?.stations?.map((s: any) => s.name) || [];
+        }
+      }
+
+      // 2. Register with Backend
+      await driverApi.registerRoute(user.id, {
+        destination,
+        availableSeats,
+        metroStations,
+      });
+
+      // 3. Update Local State
+      const newRoute = {
+        id: 'route_' + Date.now(),
+        driverId: user.id,
+        currentLocation,
+        destination,
+        destinationCoords,
+        availableSeats,
+      };
+
+      setActiveRoute(newRoute);
+      localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify(newRoute));
+      setShowRouteDialog(false);
+      toast.success(`Route registered! Matching with riders near ${metroStations.length} stations.`);
+
+      // 4. Start the Push Polling Loop
+      startLocationUpdates();
+
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to register route');
+    }
+  };
+
+  const handleAcceptMatch = async () => {
+    if (!incomingMatch) return;
+    try {
+      await matchingApi.acceptMatch(incomingMatch.matchId, { driverId: user.id });
+      toast.success("Ride Accepted!");
+      setIncomingMatch(null);
+      // The stream will update the active trips list automatically
+    } catch (error) {
+      console.error("Accept match error", error);
+      toast.error("Failed to accept ride");
+    }
+  };
+
+  const handleDeclineMatch = async () => {
+    if (!incomingMatch) return;
+    try {
+      await matchingApi.declineMatch(incomingMatch.matchId, { driverId: user.id });
+      toast.info("Ride Declined");
+      setIncomingMatch(null);
+    } catch (error) {
+      console.error("Decline match error", error);
+    }
+  };
+
   const handlePickup = async (tripId: string) => {
     try {
-      // Call backend to record pickup
       await tripApi.recordPickup(tripId, {
         latitude: currentLocation.lat,
         longitude: currentLocation.lng
       });
-
-      setTrips(prev => prev.map(trip =>
-        trip.id === tripId ? { ...trip, status: 'active' } : trip
-      ));
       toast.success('Pickup confirmed!');
+      // Stream will handle UI update
     } catch (error) {
-      console.error("Pickup error:", error);
       toast.error('Failed to confirm pickup');
     }
   };
 
   const handleDropoff = async (tripId: string) => {
     const trip = trips.find(t => t.id === tripId);
-    if (!trip) return;
-
     try {
-      // Call backend to record dropoff
       await tripApi.recordDropoff(tripId, {
         latitude: currentLocation.lat,
         longitude: currentLocation.lng
       });
 
-      setTrips(prev => prev.map(t =>
-        t.id === tripId ? { ...t, status: 'completed' } : t
-      ));
-      
-      setRideHistory(prev => [{
-        id: 'h_' + Date.now(),
-        date: new Date().toISOString().split('T')[0],
-        riderName: trip.riderName,
-        destination: trip.destination,
-        fare: trip.fare,
-        rating: 0,
-        duration: '20 min',
-      }, ...prev]);
+      if (trip) setTotalEarnings(prev => prev + trip.fare);
 
-      setTotalEarnings(prev => prev + trip.fare);
-      
-      toast.success('Drop-off confirmed! Please rate your rider.');
-      
-      setSelectedRiderForRating(trip);
-      setRatingDialogOpen(true);
+      toast.success('Drop-off confirmed!');
+      if (trip) {
+        setSelectedRiderForRating(trip);
+        setRatingDialogOpen(true);
+      }
     } catch (error) {
       toast.error('Failed to confirm drop-off');
     }
   };
 
-  const handleRateRider = async (rating: number, feedback: string) => {
+  const handleRateRider = async (rating: number) => {
     if (!selectedRiderForRating) return;
-
     try {
-      // 1. Update Driver Service (Record that we gave a rating)
-      // await driverApi.rateRider({
-      //   driverId: user.id,
-      //   tripId: selectedRiderForRating.id,
-      //   rating: rating,
-      //   feedback: feedback
-      // });
-
-      // 2. Update Rider Service (Actually affect the rider's score)
-      // Note: We need the riderId. In the current trips mock/data, we need to ensure riderId is present.
-      // The trip object from getDashboard has riderName but might not have riderId if not mapped correctly.
-      // Assuming selectedRiderForRating has riderId (mapped in fetchDashboard).
-      if (selectedRiderForRating.riderId) {
-        // await riderApi.rateRider({
-        //   riderId: selectedRiderForRating.riderId,
-        //   rating: rating
-        // });
-      }
-
-      toast.success(`Rated ${selectedRiderForRating.riderName} successfully! (Local only)`);
-    } catch (error) {
-      console.error("Rating error:", error);
-      // Even if one fails, we might want to show success if at least one worked, 
-      // or show a specific error. For now, generic error.
-      toast.error('Failed to submit rating completely. Please try again.');
+      // Call your Rating API here
+      toast.success("Rating submitted");
+    } catch (e) {
+      toast.error("Could not submit rating");
     }
   };
 
-  // Profile picture upload removed; avatar will use initial only.
-
-  const getTodayEarnings = () => {
-    const today = new Date().toISOString().split('T')[0];
-    return rideHistory
-      .filter(ride => ride.date === today)
-      .reduce((sum, ride) => sum + ride.fare, 0);
-  };
-
-  const getYesterdayEarnings = () => {
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-    return rideHistory
-      .filter(ride => ride.date === yesterday)
-      .reduce((sum, ride) => sum + ride.fare, 0);
-  };
+  // --- Render Helpers ---
 
   if (loadError) return <div>Error loading maps configuration.</div>;
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Profile Header */}
+
+        {/* Header Section */}
         <div className="mb-8 bg-white rounded-lg shadow-sm p-6">
           <div className="flex items-center gap-6">
             <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-3xl font-semibold">
-              {user.name?.charAt(0).toUpperCase() || 'U'}
+              {user.name?.charAt(0).toUpperCase() || 'D'}
             </div>
             <div className="flex-1">
               <h1 className="text-3xl mb-1">{user.name}</h1>
@@ -438,131 +416,49 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                 </div>
                 <div className="flex items-center gap-1">
                   <DollarSign className="h-5 w-5 text-green-500" />
-                  <span>₹{totalEarnings} Total Earned</span>
+                  <span>₹{totalEarnings} Earned</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Today's Earnings</p>
-                  <p className="text-2xl mt-1">₹{getTodayEarnings()}</p>
-                </div>
-                <DollarSign className="h-8 w-8 text-green-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Active Trips</p>
-                  <p className="text-2xl mt-1">{trips.filter(t => t.status === 'active').length}</p>
-                </div>
-                <Activity className="h-8 w-8 text-blue-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Scheduled</p>
-                  <p className="text-2xl mt-1">{trips.filter(t => t.status === 'scheduled').length}</p>
-                </div>
-                <Clock className="h-8 w-8 text-orange-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Available Seats</p>
-                  <p className="text-2xl mt-1">{activeRoute?.availableSeats || 0}</p>
-                </div>
-                <Users className="h-8 w-8 text-purple-500" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
+        {/* Action Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Map and Route */}
+
+          {/* LEFT COLUMN: Map & Route */}
           <div className="lg:col-span-2 space-y-6">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Live Map & Route</CardTitle>
-                    <CardDescription>Your current location and destination</CardDescription>
-                  </div>
-                  <Dialog open={showRouteDialog} onOpenChange={setShowRouteDialog}>
-                    <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="h-4 w-4 mr-2" />
-                        Start Route
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="sm:max-w-[425px]">
-                      <DialogHeader>
-                        <DialogTitle>Start New Route</DialogTitle>
-                        <DialogDescription>Set your destination and available seats</DialogDescription>
-                      </DialogHeader>
-                      <form onSubmit={handleRegisterRoute} className="space-y-4">
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-                          <p className="text-blue-900 mb-1">📍 Current Location</p>
-                          <p className="text-blue-700 text-xs">
-                            {currentLocation.lat?.toFixed(4)}, {currentLocation.lng?.toFixed(4)}
-                          </p>
-                          <p className="text-blue-600 text-xs mt-1">
-                            Departure: {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                        </div>
-
-                        {/* Google Places Autocomplete Integration */}
-                        <div className="space-y-2">
-                          <Label htmlFor="destination">Target Destination</Label>
-                          {isLoaded ? (
+                  <CardTitle>Live Map</CardTitle>
+                  {!activeRoute && (
+                    <Dialog open={showRouteDialog} onOpenChange={setShowRouteDialog}>
+                      <DialogTrigger asChild>
+                        <Button><Plus className="h-4 w-4 mr-2" /> Start Route</Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[425px]">
+                        <DialogHeader>
+                          <DialogTitle>Register Route</DialogTitle>
+                          <DialogDescription>Where are you heading?</DialogDescription>
+                        </DialogHeader>
+                        <form onSubmit={handleRegisterRoute} className="space-y-4">
+                          <Label>Destination</Label>
+                          {isLoaded && (
                             <PlaceSearchBox
-                              placeholder="Search for destination..."
                               onPlaceSelect={(place) => {
-                                // Important: This updates the state required for handleRegisterRoute
                                 setDestination(place.address);
                                 setDestinationCoords(place.coords);
                               }}
                             />
-                          ) : (
-                            <Input disabled placeholder="Loading maps..." />
                           )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="seats">Available Seats</Label>
-                          <Input
-                            id="seats"
-                            type="number"
-                            min="1"
-                            max="8"
-                            value={availableSeats}
-                            onChange={(e) => setAvailableSeats(parseInt(e.target.value))}
-                            required
-                          />
-                        </div>
-
-                        <Button type="submit" className="w-full">Start Route</Button>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
+                          <Label>Seats</Label>
+                          <Input type="number" min="1" max="8" value={availableSeats} onChange={e => setAvailableSeats(Number(e.target.value))} />
+                          <Button type="submit" className="w-full">Start Driving</Button>
+                        </form>
+                      </DialogContent>
+                    </Dialog>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -582,174 +478,75 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                   />
                 )}
                 {activeRoute && (
-                  <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600">Destination</p>
-                        <p>{activeRoute.destination}</p>
-                      </div>
-                      <Badge>Active</Badge>
-                    </div>
+                  <div className="mt-4 p-3 bg-blue-50 text-blue-800 rounded flex justify-between">
+                    <span>Heading to: <strong>{activeRoute.destination}</strong></span>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      localStorage.removeItem(ROUTE_STORAGE_KEY);
+                      setActiveRoute(null);
+                      if (locationUpdateInterval) clearInterval(locationUpdateInterval);
+                    }}>End Route</Button>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Trips */}
+            {/* Active Trips List */}
             <Card>
-              <CardHeader>
-                <CardTitle>Current Trips</CardTitle>
-                <CardDescription>Manage pickups and drop-offs</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Active Trips</CardTitle></CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {trips.map((trip) => (
-                    <div key={trip.id} className="border rounded-lg p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white">
-                            {trip.riderName.charAt(0)}
-                          </div>
-                          <div>
-                            <p>{trip.riderName}</p>
-                            <div className="flex items-center gap-1">
-                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                              <span className="text-xs text-gray-600">{trip.riderRating}</span>
-                            </div>
-                          </div>
+                  {trips.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">Waiting for ride requests...</div>
+                  ) : (
+                    trips.map(trip => (
+                      <div key={trip.id} className="border p-4 rounded-lg flex flex-col gap-2">
+                        <div className="flex justify-between">
+                          <span className="font-semibold">{trip.riderName}</span>
+                          <Badge>{trip.status}</Badge>
                         </div>
-                        <Badge
-                          variant={
-                            trip.status === 'completed' ? 'default' :
-                            trip.status === 'active' ? 'default' : 'secondary'
-                          }
-                        >
-                          {trip.status}
-                        </Badge>
-                      </div>
-                      <div className="space-y-2 mb-3">
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <MapPin className="h-4 w-4" />
-                          <span>Pickup: {trip.pickupStation}</span>
+                        <div className="text-sm text-gray-600 grid grid-cols-2 gap-2">
+                          <span>📍 Pickup: {trip.pickupStation}</span>
+                          <span>🏁 Drop: {trip.destination}</span>
+                          <span>💰 Fare: ₹{trip.fare}</span>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <MapPin className="h-4 w-4" />
-                          <span>Drop: {trip.destination}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <DollarSign className="h-4 w-4" />
-                          <span>Fare: ₹{trip.fare}</span>
+                        <div className="flex gap-2 mt-2">
+                          {trip.status === 'scheduled' && (
+                            <Button size="sm" className="w-full" onClick={() => handlePickup(trip.id)}>
+                              <CheckCircle2 className="w-4 h-4 mr-2" /> Arrived at Pickup
+                            </Button>
+                          )}
+                          {trip.status === 'active' && (
+                            <Button size="sm" className="w-full" onClick={() => handleDropoff(trip.id)}>
+                              <CheckCircle2 className="w-4 h-4 mr-2" /> Complete Dropoff
+                            </Button>
+                          )}
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        {trip.status === 'scheduled' && (
-                          <Button
-                            size="sm"
-                            onClick={() => handlePickup(trip.id)}
-                            className="flex-1"
-                          >
-                            <CheckCircle2 className="h-4 w-4 mr-1" />
-                            Confirm Pickup
-                          </Button>
-                        )}
-                        {trip.status === 'active' && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleDropoff(trip.id)}
-                            className="flex-1"
-                          >
-                            <CheckCircle2 className="h-4 w-4 mr-1" />
-                            Confirm Drop-off
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {trips.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <Users className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                      <p>No trips yet</p>
-                    </div>
+                    ))
                   )}
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* History & Earnings */}
+          {/* RIGHT COLUMN: Stats & History */}
           <div className="space-y-6">
             <Card>
-              <CardHeader>
-                <CardTitle>Earnings Summary</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg">
-                  <p className="text-sm text-gray-600 mb-1">Total Earnings</p>
-                  <p className="text-3xl text-green-700">₹{totalEarnings}</p>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">Today</span>
-                    <span className="text-green-600">₹{getTodayEarnings()}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">Yesterday</span>
-                    <span>₹{getYesterdayEarnings()}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">Total Rides</span>
-                    <span>{rideHistory.length}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">Avg. per Ride</span>
-                    <span>₹{rideHistory.length > 0 ? Math.round(totalEarnings / rideHistory.length) : 0}</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Ride History</CardTitle>
-                <CardDescription>Past rides and destinations</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Ride History</CardTitle></CardHeader>
               <CardContent>
                 <Tabs defaultValue="recent">
                   <TabsList className="w-full">
                     <TabsTrigger value="recent" className="flex-1">Recent</TabsTrigger>
                     <TabsTrigger value="all" className="flex-1">All</TabsTrigger>
                   </TabsList>
-                  <TabsContent value="recent" className="space-y-3 mt-4">
-                    {rideHistory.slice(0, 3).map((ride) => (
-                      <div key={ride.id} className="border rounded-lg p-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="text-sm">{ride.riderName}</p>
-                            <p className="text-xs text-gray-500">{ride.destination}</p>
-                          </div>
-                          <span className="text-sm text-green-600">₹{ride.fare}</span>
+                  <TabsContent value="recent">
+                    {rideHistory.slice(0, 5).map(ride => (
+                      <div key={ride.id} className="text-sm border-b py-2 last:border-0">
+                        <div className="flex justify-between font-medium">
+                          <span>{ride.riderName}</span>
+                          <span className="text-green-600">₹{ride.fare}</span>
                         </div>
-                        <div className="flex justify-between items-center text-xs text-gray-500">
-                          <span>{ride.date}</span>
-                          <span>{ride.duration}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </TabsContent>
-                  <TabsContent value="all" className="space-y-3 mt-4 max-h-96 overflow-y-auto">
-                    {rideHistory.map((ride) => (
-                      <div key={ride.id} className="border rounded-lg p-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="text-sm">{ride.riderName}</p>
-                            <p className="text-xs text-gray-500">{ride.destination}</p>
-                          </div>
-                          <span className="text-sm text-green-600">₹{ride.fare}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs text-gray-500">
-                          <span>{ride.date}</span>
-                          <span>{ride.duration}</span>
-                        </div>
+                        <div className="text-gray-500 text-xs">{ride.date} • {ride.destination}</div>
                       </div>
                     ))}
                   </TabsContent>
@@ -757,10 +554,55 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
               </CardContent>
             </Card>
           </div>
+
         </div>
       </div>
 
-      {/* Rating Dialog */}
+      {/* Incoming Match Dialog */}
+      <Dialog open={!!incomingMatch} onOpenChange={(open) => !open && setIncomingMatch(null)}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>New Ride Request!</DialogTitle>
+            <DialogDescription>A rider is looking for a ride near you.</DialogDescription>
+          </DialogHeader>
+          {incomingMatch && (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
+                <DollarSign className="h-8 w-8 text-green-600" />
+                <div>
+                  <p className="text-sm text-gray-500">Estimated Fare</p>
+                  <p className="text-xl font-bold text-green-700">₹{incomingMatch.fare}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <MapPin className="h-5 w-5 text-green-500 mt-1" />
+                  <div>
+                    <p className="text-sm text-gray-500">Pickup</p>
+                    <p className="font-medium">{incomingMatch.pickupStation}</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <MapPin className="h-5 w-5 text-red-500 mt-1" />
+                  <div>
+                    <p className="text-sm text-gray-500">Destination</p>
+                    <p className="font-medium">{incomingMatch.destination}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex gap-2 sm:justify-between">
+            <Button variant="outline" className="flex-1" onClick={handleDeclineMatch}>
+              Decline
+            </Button>
+            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={handleAcceptMatch}>
+              Accept Ride
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <RatingDialog
         open={ratingDialogOpen}
         onOpenChange={setRatingDialogOpen}

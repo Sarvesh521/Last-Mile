@@ -32,6 +32,21 @@ service TripService {
       body: "*"
     };
   };
+
+  // Server-side streaming for trip status updates
+  rpc MonitorTripUpdates(MonitorTripUpdatesRequest) returns (stream MonitorTripUpdatesResponse);
+}
+
+message MonitorTripUpdatesRequest {
+  string trip_id = 1;
+  string user_id = 2; // can be rider or driver
+}
+
+message MonitorTripUpdatesResponse {
+  string trip_id = 1;
+  TripStatus status = 2;
+  string message = 3;
+  bool success = 4;
 }
 
 message CreateTripRequest {

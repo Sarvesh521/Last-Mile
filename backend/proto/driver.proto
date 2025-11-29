@@ -50,6 +50,35 @@ service DriverService {
 
   // Driver starts an active trip called from Trip Service
   rpc StartTrip(StartTripRequest) returns (StartTripResponse);
+
+  // Server-side streaming for driver dashboard updates (new rides)
+  rpc MonitorDriverDashboard(MonitorDriverDashboardRequest) returns (stream MonitorDriverDashboardResponse);
+}
+
+message MonitorDriverDashboardRequest {
+  string driver_id = 1;
+}
+
+message MonitorDriverDashboardResponse {
+  bool success = 1;
+  string driver_id = 2;
+  repeated TripInfo active_trips = 3;
+  string message = 4;
+  MatchRequest match_request = 5;
+  TripUpdate trip_update = 6;
+}
+
+message MatchRequest {
+  string match_id = 1;
+  string rider_id = 2;
+  string pickup_station = 3;
+  string destination = 4;
+  int32 fare = 5;
+}
+
+message TripUpdate {
+  string trip_id = 1;
+  string status = 2;
 }
 
 message RegisterRouteRequest {

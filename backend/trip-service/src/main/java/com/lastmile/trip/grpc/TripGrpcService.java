@@ -22,6 +22,12 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
     @Autowired
     private TripRepository tripRepository;
 
+    @Autowired
+    private org.springframework.data.redis.core.RedisTemplate<String, String> redisTemplate;
+
+    @Autowired
+    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
     @GrpcClient("rider-service")
     private RiderServiceGrpc.RiderServiceBlockingStub riderStub;
 
@@ -37,6 +43,20 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
         Metadata headers = new Metadata();
         headers.put(Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER), "Bearer " + token);
         return MetadataUtils.attachHeaders(stub, headers);
+    }
+
+    private void publishTripUpdate(String tripId, String status, String driverId, String riderId) {
+        // Publish to trip channel
+        String tripChannel = "trip-updates:" + tripId;
+        String message = tripId + "," + status;
+        redisTemplate.convertAndSend(tripChannel, message);
+
+        // Publish to driver dashboard
+        if (driverId != null) {
+            String driverChannel = "driver-dashboard:" + driverId;
+            String driverMessage = "TRIP_UPDATE," + tripId + "," + status;
+            redisTemplate.convertAndSend(driverChannel, driverMessage);
+        }
     }
     
     @Override
@@ -71,6 +91,8 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setFare(fare);
             
             trip = tripRepository.save(trip);
+
+            publishTripUpdate(trip.getTripId(), "SCHEDULED", driverId, riderId);
 
             // Fetch Rider Info for Rating
             double riderRating = 0.0;
@@ -183,6 +205,8 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setStatus(Trip.TripStatus.ACTIVE);
             tripRepository.save(trip);
 
+            publishTripUpdate(tripId, "ACTIVE", trip.getDriverId(), trip.getRiderId());
+
             // Notify Driver
             try {
                 driverStub.startTrip(StartTripRequest.newBuilder()
@@ -232,6 +256,8 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             }
             tripRepository.save(trip);
 
+            publishTripUpdate(tripId, "COMPLETED", trip.getDriverId(), trip.getRiderId());
+
             // Notify Driver
             try {
                 driverStub.completeActiveTrip(CompleteActiveTripRequest.newBuilder()
@@ -263,6 +289,48 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
         
         responseObserver.onNext(responseBuilder.build());
         responseObserver.onCompleted();
+    }
+
+    @Override
+    public void monitorTripUpdates(MonitorTripUpdatesRequest request,
+                                   StreamObserver<MonitorTripUpdatesResponse> responseObserver) {
+        String tripId = request.getTripId();
+        String channel = "trip-updates:" + tripId;
+        
+        io.grpc.stub.ServerCallStreamObserver<MonitorTripUpdatesResponse> serverObserver = 
+            (io.grpc.stub.ServerCallStreamObserver<MonitorTripUpdatesResponse>) responseObserver;
+
+        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
+            String body = new String(message.getBody());
+            String[] parts = body.split(",");
+            if (parts.length >= 2) {
+                try {
+                    String tId = parts[0];
+                    String statusStr = parts[1];
+                    
+                    TripStatus status = TripStatus.SCHEDULED;
+                    try { status = TripStatus.valueOf(statusStr); } catch (Exception e) {}
+
+                    MonitorTripUpdatesResponse response = MonitorTripUpdatesResponse.newBuilder()
+                            .setTripId(tId)
+                            .setStatus(status)
+                            .setSuccess(true)
+                            .build();
+                            
+                    synchronized (responseObserver) {
+                        responseObserver.onNext(response);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        redisMessageListenerContainer.addMessageListener(listener, new org.springframework.data.redis.listener.ChannelTopic(channel));
+
+        serverObserver.setOnCancelHandler(() -> {
+            redisMessageListenerContainer.removeMessageListener(listener);
+        });
     }
     
     private Trip.TripStatus convertStatus(com.lastmile.trip.proto.TripStatus status) {

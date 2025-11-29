@@ -8,11 +8,24 @@ grpc:
     trip-service:
       address: 'static://${TRIP_SERVICE_HOST:localhost}:${TRIP_SERVICE_PORT:50057}'
       negotiationType: plaintext
+    station-service:
+      address: 'static://${STATION_SERVICE_HOST:localhost}:${STATION_SERVICE_PORT:50051}'
+      negotiationType: plaintext
+    rider-service:
+      address: 'static://${RIDER_SERVICE_HOST:localhost}:${RIDER_SERVICE_PORT:50054}'
+      negotiationType: plaintext
+    notification-service:
+      address: 'static://${NOTIFICATION_SERVICE_HOST:localhost}:${NOTIFICATION_SERVICE_PORT:50058}'
+      negotiationType: plaintext
 
 spring:
   application:
     name: matching-service
   data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: lastmile_matching
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}

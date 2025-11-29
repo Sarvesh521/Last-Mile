@@ -23,6 +23,13 @@ service LocationService {
       get: "/location/nearby"
     };
   };
+
+  // Server-side streaming for rider to watch driver location
+  rpc MonitorDriverLocation(MonitorDriverLocationRequest) returns (stream DriverLocation);
+}
+
+message MonitorDriverLocationRequest {
+  string driver_id = 1;
 }
 
 message UpdateLocationRequest {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -9,9 +9,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { MapPin, Clock, Car, Plus, CheckCircle2, XCircle, Loader2, Navigation, Star, Phone } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { riderApi, matchingApi, stationApi, tripApi, driverApi } from '../lib/api';
-import { MapView, PlaceSearchBox } from './MapView';
+import { LiveMap } from './LiveMap';
+import { PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
 import { useLoadScript } from '@react-google-maps/api';
+import { matchingClient, locationClient, tripClient, getAuthMetadata } from '../lib/grpc';
+import * as MatchingPb from '../proto/matching_pb.js';
+import * as LocationPb from '../proto/location_pb.js';
+import * as TripPb from '../proto/trip_pb.js';
+
+// @ts-ignore
+const MonitorMatchStatusRequest = MatchingPb.MonitorMatchStatusRequest || MatchingPb.default.MonitorMatchStatusRequest;
+// @ts-ignore
+const MonitorDriverLocationRequest = LocationPb.MonitorDriverLocationRequest || LocationPb.default.MonitorDriverLocationRequest;
+// @ts-ignore
+const MonitorTripUpdatesRequest = TripPb.MonitorTripUpdatesRequest || TripPb.default.MonitorTripUpdatesRequest;
 
 // Define libraries outside component to prevent re-renders
 const libraries: ("places")[] = ["places"];
@@ -33,6 +45,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   const [selectedDriverForRating, setSelectedDriverForRating] = useState<any>(null);
   const [rideAccepted, setRideAccepted] = useState(false);
   const [inRide, setInRide] = useState(false);
+  const [driverLocation, setDriverLocation] = useState<{ latitude: number, longitude: number } | undefined>(undefined);
 
   // Ride request form
   const [metroStation, setMetroStation] = useState('');
@@ -41,6 +54,15 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   const [arrivalTime, setArrivalTime] = useState('');
   const [matching, setMatching] = useState(false);
   const [stations, setStations] = useState<any[]>([]);
+
+  // Loading states
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  // Stream references to cancel on unmount
+  const matchStreamRef = useRef<any>(null);
+  const locationStreamRef = useRef<any>(null);
+  const tripStreamRef = useRef<any>(null);
+
 
   // Format arrival time to IST-friendly display.
   const formatArrivalTimeIST = (value: any) => {
@@ -61,7 +83,6 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   };
 
   // Backend persistence: fetch rides for this rider on mount
-
   useEffect(() => {
     // Load stations from backend
     stationApi.getAllStations()
@@ -75,38 +96,139 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
       })
       .catch(() => setStations([]));
 
-    // Fetch ride requests for this rider from backend
-    riderApi.listRideRequests(user.id)
+    // Fetch dashboard data (current ride + history)
+    riderApi.getDashboard(user.id)
       .then(({ data }) => {
-        const arr = Array.isArray(data?.ride_requests) ? data.ride_requests : (Array.isArray(data?.rideRequests) ? data.rideRequests : []);
-        const items = arr.map((rr: any) => ({
-              id: rr.ride_request_id || rr.rideRequestId,
-              riderId: rr.rider_id || rr.riderId,
-              metroStation: rr.metro_station || rr.metroStation,
-              destination: rr.destination,
-              destinationCoords: undefined,
-              arrivalTime: rr.arrival_time || rr.arrivalTime,
-              status: (rr.status === 0 || rr.status === 'PENDING') ? 'pending' :
-                      (rr.status === 1 || rr.status === 'MATCHED') ? 'matched' :
-                      (rr.status === 2 || rr.status === 'IN_PROGRESS') ? 'active' :
-                      (rr.status === 3 || rr.status === 'COMPLETED') ? 'completed' :
-                      (rr.status === 4 || rr.status === 'CANCELLED') ? 'cancelled' : 'pending',
-              fare: Math.floor(Math.random() * 100) + 100,
-              tripId: rr.trip_id || rr.tripId,
-            }))
-          ;
-        setRides(items);
-        if (items.length) {
-          const current = items.find(x => x.status === 'matched') || items.find(x => x.status === 'pending');
-          if (current) setActiveRide(current);
+        if (data?.success) {
+          const history = Array.isArray(data.rideHistory) ? data.rideHistory : [];
+          const current = data.currentRide;
+
+          const mapRide = (r: any) => ({
+            id: r.rideRequestId || r.ride_request_id,
+            riderId: r.riderId || r.rider_id,
+            metroStation: r.metroStation || r.metro_station,
+            destination: r.destination,
+            destinationCoords: undefined,
+            arrivalTime: r.arrivalTime || r.arrival_time,
+            status: (r.status === 0 || r.status === 'PENDING') ? 'pending' :
+              (r.status === 1 || r.status === 'MATCHED') ? 'matched' :
+                (r.status === 2 || r.status === 'IN_PROGRESS') ? 'active' :
+                  (r.status === 3 || r.status === 'COMPLETED') ? 'completed' :
+                    (r.status === 4 || r.status === 'CANCELLED') ? 'cancelled' : 'pending',
+            fare: r.fare || (Math.floor(Math.random() * 100) + 100),
+            tripId: r.tripId || r.trip_id,
+            driver: r.driverId ? { id: r.driverId, name: 'Driver', rating: 5.0 } : undefined // Basic driver info if available
+          });
+
+          const allRides = history.map(mapRide);
+          if (current) {
+            const active = mapRide(current);
+            allRides.unshift(active);
+            setActiveRide(active);
+
+            // If matched/active, restore driver info if possible
+            if (active.driver && active.driver.id) {
+              driverApi.getDashboard(active.driver.id).then(res => {
+                if (res.data?.success) {
+                  setActiveRide((prev: any) => ({
+                    ...prev,
+                    driver: {
+                      ...prev.driver,
+                      name: res.data.driverId, // Ideally name should be in response
+                      rating: res.data.driverRating,
+                      currentLocation: res.data.currentLocation
+                    }
+                  }));
+                }
+              }).catch(() => { });
+            }
+          }
+          setRides(allRides);
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("Failed to load dashboard", err));
   }, [user.id]);
+
+  // Clean up streams on unmount
+  useEffect(() => {
+    return () => {
+      if (matchStreamRef.current) matchStreamRef.current.cancel();
+      if (locationStreamRef.current) locationStreamRef.current.cancel();
+      if (tripStreamRef.current) tripStreamRef.current.cancel();
+    };
+  }, []);
+
+  // Monitor Driver Location when active ride has a driver
+  useEffect(() => {
+    if (activeRide?.driver?.id && (activeRide.status === 'matched' || activeRide.status === 'active')) {
+      if (locationStreamRef.current) locationStreamRef.current.cancel();
+
+      const req = new MonitorDriverLocationRequest();
+      req.setDriverId(activeRide.driver.id);
+
+      const stream = locationClient.monitorDriverLocation(req, getAuthMetadata());
+      locationStreamRef.current = stream;
+
+      stream.on('data', (response: any) => {
+        const lat = response.getLatitude();
+        const lng = response.getLongitude();
+        setDriverLocation({ latitude: lat, longitude: lng });
+
+        // Update active ride driver location
+        setActiveRide((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            driver: {
+              ...prev.driver,
+              currentLocation: { latitude: lat, longitude: lng }
+            }
+          };
+        });
+      });
+
+      stream.on('error', (err: any) => {
+        console.error('Location stream error', err);
+      });
+    } else {
+      if (locationStreamRef.current) {
+        locationStreamRef.current.cancel();
+        locationStreamRef.current = null;
+      }
+    }
+  }, [activeRide?.driver?.id, activeRide?.status]);
+
+  // Monitor Trip Updates
+  useEffect(() => {
+    if (activeRide?.tripId) {
+      if (tripStreamRef.current) tripStreamRef.current.cancel();
+
+      const req = new MonitorTripUpdatesRequest();
+      req.setTripId(activeRide.tripId);
+
+      const stream = tripClient.monitorTripUpdates(req, getAuthMetadata());
+      tripStreamRef.current = stream;
+
+      stream.on('data', (response: any) => {
+        const status = response.getStatus(); // Enum or string
+        // Map proto status to frontend status
+        let newStatus = activeRide.status;
+        if (status === 1 || status === 'ACTIVE') newStatus = 'active';
+        if (status === 2 || status === 'COMPLETED') newStatus = 'completed';
+
+        if (newStatus !== activeRide.status) {
+          setActiveRide((prev: any) => ({ ...prev, status: newStatus }));
+          if (newStatus === 'completed') {
+            handleCompleteRide();
+          }
+        }
+      });
+    }
+  }, [activeRide?.tripId]);
 
   const handleRequestRide = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!destination || !destinationCoords) {
       toast.error('Please select a destination from the search');
       return;
@@ -115,7 +237,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
     setMatching(true);
 
     try {
-      // 1) Compute arrival time (fallback: now). Use epoch seconds, ensure valid.
+      // 1) Compute arrival time
       const arrivalEpoch = (() => {
         if (!arrivalTime) return Math.floor(Date.now() / 1000);
         try {
@@ -130,6 +252,8 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
           return Math.floor(Date.now() / 1000);
         }
       })();
+
+      // Register Request (REST)
       const reg = await riderApi.registerRideRequest(user.id, {
         riderId: user.id,
         metroStation,
@@ -137,12 +261,9 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         arrivalTime: arrivalEpoch,
       });
       const respData = reg?.data || {};
-      console.debug('Ride request raw response', respData);
       const ride_request_id = respData.ride_request_id || respData.rideRequestId;
-      if (!ride_request_id) {
-        toast.error(`Debug: ride request response keys => ${Object.keys(respData).join(', ') || 'NONE'}`);
-        throw new Error('No ride_request_id');
-      }
+
+      if (!ride_request_id) throw new Error('No ride_request_id');
 
       const pendingRide = {
         id: ride_request_id,
@@ -154,69 +275,86 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         status: 'pending',
         fare: Math.floor(Math.random() * 100) + 100,
       };
-      setRides(prev => ([...prev, pendingRide]));
-      // Surface the newly created request in the Current Ride panel
+      setRides(prev => ([pendingRide, ...prev]));
       setActiveRide(pendingRide);
       setShowRequestDialog(false);
       toast.success('Ride request submitted! Matching with nearby drivers...');
 
-      // 2) Request matching
-      const matchResp = await matchingApi.matchRiderWithDriver({
+      // 2) Request matching (REST)
+      // Note: We still use the REST API to trigger the match, but we listen via gRPC
+      await matchingApi.matchRiderWithDriver({
         riderId: user.id,
+        rideRequestId: ride_request_id, // Added missing field
         metroStation,
         destination,
         arrivalTime: arrivalEpoch,
       });
-      const matchId = matchResp?.data?.match_id || ride_request_id;
 
-      // 3) Poll match status until MATCHED
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        try {
-          const { data } = await matchingApi.getMatchStatus(matchId);
-          const statusVal = data?.status ?? data?.rideStatus;
-          if (data?.success && (statusVal === 'MATCHED' || statusVal === 1)) {
-            clearInterval(poll);
-            const driverId = data.driver_id || data.driverId;
-            const tripId = data.trip_id || data.tripId;
-            let driverInfo: any = null;
-            try { driverInfo = (await driverApi.getDashboard(driverId)).data; } catch {}
+      // 3) Start Streaming Match Status (gRPC)
+      if (matchStreamRef.current) matchStreamRef.current.cancel();
 
-            const matchedRide = {
-              ...pendingRide,
-              status: 'matched',
-              tripId,
-              driver: {
-                id: driverId,
-                name: `Driver ${driverId.substring(0, 5)}`,
-                vehicle: '—',
-                rating: 4.8,
-                phone: '',
-                currentLocation: driverInfo?.currentLocation ? {
-                  latitude: driverInfo.currentLocation.latitude,
-                  longitude: driverInfo.currentLocation.longitude,
-                } : undefined,
-              },
-            };
-            setRides(prev => prev.map(r => r.id === pendingRide.id ? matchedRide : r));
-            setActiveRide(matchedRide);
-            toast.success('Match found! Your driver is on the way.');
-          }
-        } catch {}
-        if (attempts > 15) { clearInterval(poll); toast.error('Unable to find a match right now.'); }
-      }, 2000);
+      const req = new MonitorMatchStatusRequest();
+      req.setRiderId(user.id);
+
+      const stream = matchingClient.monitorMatchStatus(req, getAuthMetadata());
+      matchStreamRef.current = stream;
+
+      stream.on('data', async (response: any) => {
+        const status = response.getStatus(); // Enum or string
+        const matchId = response.getMatchId();
+        const driverId = response.getDriverId();
+        const tripId = response.getTripId();
+
+        console.log('Match Update:', { status, matchId, driverId, tripId });
+
+        if (status === 1 || status === 'MATCHED' || status === 'CONFIRMED') {
+          // Match found!
+
+          let driverInfo: any = null;
+          try { driverInfo = (await driverApi.getDashboard(driverId)).data; } catch { }
+
+          const matchedRide = {
+            ...pendingRide,
+            status: 'matched',
+            tripId,
+            driver: {
+              id: driverId,
+              name: `Driver ${driverId.substring(0, 5)}`,
+              vehicle: 'Toyota Prius',
+              rating: 4.8,
+              phone: '9999999999',
+              currentLocation: driverInfo?.currentLocation ? {
+                latitude: driverInfo.currentLocation.latitude,
+                longitude: driverInfo.currentLocation.longitude,
+              } : undefined,
+            },
+          };
+          setRides(prev => prev.map(r => r.id === pendingRide.id ? matchedRide : r));
+          setActiveRide(matchedRide);
+          toast.success('Match found! Your driver is on the way.');
+
+          // If confirmed (trip created), stop match stream? Maybe keep it for cancellation updates.
+        } else if (status === 3 || status === 'CANCELLED') {
+          setRides(prev => prev.map(r => r.id === pendingRide.id ? { ...r, status: 'cancelled' } : r));
+          setActiveRide(null);
+          toast.error('Ride request was cancelled.');
+          stream.cancel();
+        }
+      });
+
+      stream.on('error', (err: any) => {
+        console.error('Match stream error', err);
+        // Don't toast error immediately as it might be just a connection drop
+      });
 
     } catch (error: any) {
-      const serverMsg = error?.response?.data?.message || error?.message;
-      if (serverMsg?.includes('No ride_request_id')) {
-        console.error('Ride request failure details', error?.response?.data || error);
-      }
-      toast.error(`Failed to request ride${serverMsg ? `: ${serverMsg}` : ''}`);
+      console.error('Ride request error', error);
+      toast.error('Failed to request ride');
     } finally {
       setMatching(false);
     }
   };
+
 
   const handleAcceptRide = () => {
     setRideAccepted(true);
@@ -230,8 +368,8 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         if (activeRide.tripId) {
           await tripApi.recordPickup(activeRide.tripId, { latitude: 0, longitude: 0 });
         }
-      } catch {}
-      setActiveRide(prev => ({ ...prev, status: 'active' }));
+      } catch { }
+      setActiveRide((prev: any) => ({ ...prev, status: 'active' }));
       toast.success('Ride started! Navigating to your destination.');
     }
   };
@@ -242,10 +380,10 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         if (activeRide.tripId) {
           await tripApi.recordDropoff(activeRide.tripId, { latitude: 0, longitude: 0 });
         }
-      } catch {}
+      } catch { }
       setSelectedDriverForRating(activeRide.driver);
       setRatingDialogOpen(true);
-      setActiveRide(prev => ({ ...prev, status: 'completed' }));
+      setActiveRide((prev: any) => ({ ...prev, status: 'completed' }));
       setRideAccepted(false);
       setInRide(false);
       toast.success('Ride completed! Please rate your driver.');
@@ -258,12 +396,13 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   };
 
   const handleCancelRide = async (rideId: string) => {
+    setCancellingId(rideId);
     try {
       await matchingApi.cancelMatch(rideId, {
         matchId: rideId,
         riderId: user.id
       });
-      
+
       setRides(prev => prev.filter((ride: any) => ride.id !== rideId));
       if (activeRide?.id === rideId) {
         setActiveRide(null);
@@ -274,6 +413,8 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
     } catch (error: any) {
       console.error("Cancel error:", error);
       toast.error('Failed to cancel ride');
+    } finally {
+      setCancellingId(null);
     }
   };
 
@@ -446,7 +587,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                             </div>
                           </div>
                         </div>
-                        <a 
+                        <a
                           href={`tel:${activeRide.driver.phone}`}
                           className="flex items-center justify-center gap-2 bg-white text-blue-600 py-2 px-4 rounded-lg hover:bg-blue-50 transition-colors"
                         >
@@ -510,9 +651,13 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                           variant="destructive"
                           className="w-full"
                           onClick={() => handleCancelRide(activeRide.id)}
+                          disabled={cancellingId === activeRide.id}
                         >
-                          <XCircle className="h-4 w-4 mr-2" />
-                          Cancel Ride
+                          {cancellingId === activeRide.id ? (
+                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Cancelling...</>
+                          ) : (
+                            <><XCircle className="h-4 w-4 mr-2" /> Cancel Ride</>
+                          )}
                         </Button>
                       )}
                     </div>
@@ -547,7 +692,14 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                         </div>
                         <div className="flex items-center gap-2 ml-4">
                           <Badge className="bg-yellow-500">PENDING</Badge>
-                          <Button variant="destructive" size="sm" onClick={() => handleCancelRide(ride.id)}>Cancel</Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleCancelRide(ride.id)}
+                            disabled={cancellingId === ride.id}
+                          >
+                            {cancellingId === ride.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cancel"}
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -566,10 +718,9 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <MapView
-                    driverLocation={inRide ? undefined : activeRide.driver?.currentLocation}
-                    destination={inRide ? activeRide.destinationCoords : undefined}
-                    showRoute={inRide}
+                  <LiveMap
+                    driverLocation={activeRide.driver?.currentLocation}
+                    destination={activeRide.destinationCoords}
                   />
                 </CardContent>
               </Card>
@@ -604,7 +755,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                       {ride.driver && (
                         <div className="mt-3 pt-3 border-t">
                           <p className="text-sm text-gray-600">
-                            Driver: {ride.driver.name} 
+                            Driver: {ride.driver.name}
                             <Star className="h-3 w-3 inline ml-2 fill-yellow-400 text-yellow-400" />
                             <span className="text-xs ml-1">{ride.driver.rating}</span>
                           </p>
@@ -692,11 +843,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
               <CardContent className="space-y-2">
                 <Button variant="outline" className="w-full justify-start bg-white">
                   <Phone className="h-4 w-4 mr-2" />
-                  Contact Support
-                </Button>
-                <Button variant="outline" className="w-full justify-start bg-white">
-                  <MapPin className="h-4 w-4 mr-2" />
-                  Report Issue
+                  Support
                 </Button>
               </CardContent>
             </Card>
@@ -704,7 +851,6 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         </div>
       </div>
 
-      {/* Rating Dialog */}
       <RatingDialog
         open={ratingDialogOpen}
         onOpenChange={setRatingDialogOpen}
