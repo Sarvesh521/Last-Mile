@@ -138,12 +138,24 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
 
             publishTripUpdate(trip.getTripId(), "SCHEDULED", driverId, riderId);
 
+            String driverName = "Driver " + driverId;
+            try {
+                GetUserProfileResponse userProfile = attachToken(userStub).getUserProfile(
+                    GetUserProfileRequest.newBuilder().setUserId(driverId).build()
+                );
+                if (userProfile.getSuccess()) {
+                    driverName = userProfile.getName();
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to fetch driver name: " + e.getMessage());
+            }
             // Notify Rider
             try {
                 attachToken(riderStub).matchedWithDriver(MatchedWithDriverRequest.newBuilder()
                     .setRiderId(riderId)
                     .setDriverId(driverId)
                     .setTripId(tripId)
+                    .setDriverName(driverName)
                     .build());
             } catch (Exception e) {
                 System.err.println("Failed to notify rider: " + e.getMessage());

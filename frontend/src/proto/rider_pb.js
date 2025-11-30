@@ -1679,7 +1679,8 @@ proto.com.lastmile.rider.proto.RideRequestItem.toObject = function(includeInstan
     fare: jspb.Message.getFieldWithDefault(msg, 10, 0),
     driverRatingGiven: jspb.Message.getFieldWithDefault(msg, 11, 0),
     riderRatingReceived: jspb.Message.getFieldWithDefault(msg, 12, 0),
-    dropoffTime: jspb.Message.getFieldWithDefault(msg, 13, 0)
+    dropoffTime: jspb.Message.getFieldWithDefault(msg, 13, 0),
+    driverName: jspb.Message.getFieldWithDefault(msg, 14, "")
   };
 
   if (includeInstance) {
@@ -1767,6 +1768,10 @@ proto.com.lastmile.rider.proto.RideRequestItem.deserializeBinaryFromReader = fun
     case 13:
       var value = /** @type {number} */ (reader.readInt64());
       msg.setDropoffTime(value);
+      break;
+    case 14:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setDriverName(value);
       break;
     default:
       reader.skipField();
@@ -1885,6 +1890,13 @@ proto.com.lastmile.rider.proto.RideRequestItem.serializeBinaryToWriter = functio
   if (f !== 0) {
     writer.writeInt64(
       13,
+      f
+    );
+  }
+  f = message.getDriverName();
+  if (f.length > 0) {
+    writer.writeString(
+      14,
       f
     );
   }
@@ -2122,6 +2134,24 @@ proto.com.lastmile.rider.proto.RideRequestItem.prototype.getDropoffTime = functi
  */
 proto.com.lastmile.rider.proto.RideRequestItem.prototype.setDropoffTime = function(value) {
   return jspb.Message.setProto3IntField(this, 13, value);
+};
+
+
+/**
+ * optional string driver_name = 14;
+ * @return {string}
+ */
+proto.com.lastmile.rider.proto.RideRequestItem.prototype.getDriverName = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 14, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.com.lastmile.rider.proto.RideRequestItem} returns this
+ */
+proto.com.lastmile.rider.proto.RideRequestItem.prototype.setDriverName = function(value) {
+  return jspb.Message.setProto3StringField(this, 14, value);
 };
 
 
@@ -2479,7 +2509,9 @@ proto.com.lastmile.rider.proto.MatchedWithDriverRequest.toObject = function(incl
   var f, obj = {
     riderId: jspb.Message.getFieldWithDefault(msg, 1, ""),
     driverId: jspb.Message.getFieldWithDefault(msg, 2, ""),
-    tripId: jspb.Message.getFieldWithDefault(msg, 3, "")
+    tripId: jspb.Message.getFieldWithDefault(msg, 3, ""),
+    driverName: jspb.Message.getFieldWithDefault(msg, 4, ""),
+    fare: jspb.Message.getFieldWithDefault(msg, 5, 0)
   };
 
   if (includeInstance) {
@@ -2528,6 +2560,14 @@ proto.com.lastmile.rider.proto.MatchedWithDriverRequest.deserializeBinaryFromRea
       var value = /** @type {string} */ (reader.readString());
       msg.setTripId(value);
       break;
+    case 4:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setDriverName(value);
+      break;
+    case 5:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setFare(value);
+      break;
     default:
       reader.skipField();
       break;
@@ -2575,6 +2615,20 @@ proto.com.lastmile.rider.proto.MatchedWithDriverRequest.serializeBinaryToWriter 
   if (f.length > 0) {
     writer.writeString(
       3,
+      f
+    );
+  }
+  f = message.getDriverName();
+  if (f.length > 0) {
+    writer.writeString(
+      4,
+      f
+    );
+  }
+  f = message.getFare();
+  if (f !== 0) {
+    writer.writeInt32(
+      5,
       f
     );
   }
@@ -2632,6 +2686,42 @@ proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.getTripId = fu
  */
 proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.setTripId = function(value) {
   return jspb.Message.setProto3StringField(this, 3, value);
+};
+
+
+/**
+ * optional string driver_name = 4;
+ * @return {string}
+ */
+proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.getDriverName = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 4, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.com.lastmile.rider.proto.MatchedWithDriverRequest} returns this
+ */
+proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.setDriverName = function(value) {
+  return jspb.Message.setProto3StringField(this, 4, value);
+};
+
+
+/**
+ * optional int32 fare = 5;
+ * @return {number}
+ */
+proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.getFare = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 5, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.com.lastmile.rider.proto.MatchedWithDriverRequest} returns this
+ */
+proto.com.lastmile.rider.proto.MatchedWithDriverRequest.prototype.setFare = function(value) {
+  return jspb.Message.setProto3IntField(this, 5, value);
 };
 
 

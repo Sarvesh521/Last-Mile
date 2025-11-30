@@ -42,6 +42,19 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 rider.setRideHistory(new ArrayList<>());
             }
 
+            if (rider.getCurrentRideRequest() != null) {
+                Rider.RideRequest.RideStatus status = rider.getCurrentRideRequest().getStatus();
+                if (status != Rider.RideRequest.RideStatus.COMPLETED && 
+                    status != Rider.RideRequest.RideStatus.CANCELLED) {
+                    
+                    responseBuilder.setSuccess(false)
+                            .setMessage("You already have an active ride request. Please cancel it first.");
+                    responseObserver.onNext(responseBuilder.build());
+                    responseObserver.onCompleted();
+                    return;
+                }
+            }
+
             Rider.RideRequest rideRequest = new Rider.RideRequest();
             rideRequest.setRideRequestId(UUID.randomUUID().toString());
             rideRequest.setMetroStation(metroStation);
@@ -177,6 +190,7 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 .setDriverRatingGiven(rr.getDriverRatingGiven())
                 .setRiderRatingReceived(rr.getRiderRatingReceived())
                 .setDropoffTime(rr.getDropoffTime())
+                .setDriverName(rr.getDriverName() == null ? "" : rr.getDriverName())
                 .build();
     }
 
@@ -186,6 +200,7 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
         String riderId = request.getRiderId();
         String driverId = request.getDriverId();
         String tripId = request.getTripId();
+        String driverName = request.getDriverName();
         System.out.println("Rider ID: " + riderId);
         System.out.println("Driver ID: " + driverId);
         System.out.println("Trip ID: " + tripId);
@@ -200,6 +215,7 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 rr.setStatus(Rider.RideRequest.RideStatus.MATCHED);
                 rr.setDriverId(driverId);
                 rr.setTripId(tripId);
+                rr.setDriverName(driverName);
                 System.out.println("Rider matched with driver successfully");   
                 riderRepository.save(rider);
                 

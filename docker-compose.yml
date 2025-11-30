@@ -252,6 +252,18 @@ services:
       - lastmile-network
     restart: unless-stopped
 
+  gen-proto:
+    image: node:18-bullseye
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      bash -c "apt-get update && apt-get install -y protobuf-compiler &&
+      cd frontend && npm install && cd .. &&
+      ./generate-proto.sh"
+    networks:
+      - lastmile-network
+
 volumes:
   mongodb_data:
     driver: local

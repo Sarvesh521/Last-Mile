@@ -27,6 +27,7 @@ public class Rider {
         private RideStatus status;
         private String driverId;
         private String tripId;
+        private String driverName;
         private int fare;
         private int driverRatingGiven;
         private int riderRatingReceived;

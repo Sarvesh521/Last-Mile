@@ -108,6 +108,7 @@ message RideRequestItem {
   int32 driver_rating_given = 11;
   int32 rider_rating_received = 12;
   int64 dropoff_time = 13;
+  string driver_name = 14;
 }
 
 message ListRideRequestsRequest {
@@ -123,6 +124,7 @@ message MatchedWithDriverRequest {
   string rider_id = 1;
   string driver_id = 2;
   string trip_id = 3;
+  string driver_name = 4;
 }
 
 message MatchedWithDriverResponse {

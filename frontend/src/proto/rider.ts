@@ -687,6 +687,7 @@ export namespace com.lastmile.rider.proto {
             driver_rating_given?: number;
             rider_rating_received?: number;
             dropoff_time?: number;
+            driver_name?: string;
         }) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
@@ -729,6 +730,9 @@ export namespace com.lastmile.rider.proto {
                 }
                 if ("dropoff_time" in data && data.dropoff_time != undefined) {
                     this.dropoff_time = data.dropoff_time;
+                }
+                if ("driver_name" in data && data.driver_name != undefined) {
+                    this.driver_name = data.driver_name;
                 }
             }
         }
@@ -810,6 +814,12 @@ export namespace com.lastmile.rider.proto {
         set dropoff_time(value: number) {
             pb_1.Message.setField(this, 13, value);
         }
+        get driver_name() {
+            return pb_1.Message.getFieldWithDefault(this, 14, "") as string;
+        }
+        set driver_name(value: string) {
+            pb_1.Message.setField(this, 14, value);
+        }
         static fromObject(data: {
             ride_request_id?: string;
             rider_id?: string;
@@ -824,6 +834,7 @@ export namespace com.lastmile.rider.proto {
             driver_rating_given?: number;
             rider_rating_received?: number;
             dropoff_time?: number;
+            driver_name?: string;
         }): RideRequestItem {
             const message = new RideRequestItem({});
             if (data.ride_request_id != null) {
@@ -865,6 +876,9 @@ export namespace com.lastmile.rider.proto {
             if (data.dropoff_time != null) {
                 message.dropoff_time = data.dropoff_time;
             }
+            if (data.driver_name != null) {
+                message.driver_name = data.driver_name;
+            }
             return message;
         }
         toObject() {
@@ -882,6 +896,7 @@ export namespace com.lastmile.rider.proto {
                 driver_rating_given?: number;
                 rider_rating_received?: number;
                 dropoff_time?: number;
+                driver_name?: string;
             } = {};
             if (this.ride_request_id != null) {
                 data.ride_request_id = this.ride_request_id;
@@ -922,6 +937,9 @@ export namespace com.lastmile.rider.proto {
             if (this.dropoff_time != null) {
                 data.dropoff_time = this.dropoff_time;
             }
+            if (this.driver_name != null) {
+                data.driver_name = this.driver_name;
+            }
             return data;
         }
         serialize(): Uint8Array;
@@ -954,6 +972,8 @@ export namespace com.lastmile.rider.proto {
                 writer.writeInt32(12, this.rider_rating_received);
             if (this.dropoff_time != 0)
                 writer.writeInt64(13, this.dropoff_time);
+            if (this.driver_name.length)
+                writer.writeString(14, this.driver_name);
             if (!w)
                 return writer.getResultBuffer();
         }
@@ -1001,6 +1021,9 @@ export namespace com.lastmile.rider.proto {
                         break;
                     case 13:
                         message.dropoff_time = reader.readInt64();
+                        break;
+                    case 14:
+                        message.driver_name = reader.readString();
                         break;
                     default: reader.skipField();
                 }
@@ -1177,6 +1200,8 @@ export namespace com.lastmile.rider.proto {
             rider_id?: string;
             driver_id?: string;
             trip_id?: string;
+            driver_name?: string;
+            fare?: number;
         }) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
@@ -1189,6 +1214,12 @@ export namespace com.lastmile.rider.proto {
                 }
                 if ("trip_id" in data && data.trip_id != undefined) {
                     this.trip_id = data.trip_id;
+                }
+                if ("driver_name" in data && data.driver_name != undefined) {
+                    this.driver_name = data.driver_name;
+                }
+                if ("fare" in data && data.fare != undefined) {
+                    this.fare = data.fare;
                 }
             }
         }
@@ -1210,10 +1241,24 @@ export namespace com.lastmile.rider.proto {
         set trip_id(value: string) {
             pb_1.Message.setField(this, 3, value);
         }
+        get driver_name() {
+            return pb_1.Message.getFieldWithDefault(this, 4, "") as string;
+        }
+        set driver_name(value: string) {
+            pb_1.Message.setField(this, 4, value);
+        }
+        get fare() {
+            return pb_1.Message.getFieldWithDefault(this, 5, 0) as number;
+        }
+        set fare(value: number) {
+            pb_1.Message.setField(this, 5, value);
+        }
         static fromObject(data: {
             rider_id?: string;
             driver_id?: string;
             trip_id?: string;
+            driver_name?: string;
+            fare?: number;
         }): MatchedWithDriverRequest {
             const message = new MatchedWithDriverRequest({});
             if (data.rider_id != null) {
@@ -1225,6 +1270,12 @@ export namespace com.lastmile.rider.proto {
             if (data.trip_id != null) {
                 message.trip_id = data.trip_id;
             }
+            if (data.driver_name != null) {
+                message.driver_name = data.driver_name;
+            }
+            if (data.fare != null) {
+                message.fare = data.fare;
+            }
             return message;
         }
         toObject() {
@@ -1232,6 +1283,8 @@ export namespace com.lastmile.rider.proto {
                 rider_id?: string;
                 driver_id?: string;
                 trip_id?: string;
+                driver_name?: string;
+                fare?: number;
             } = {};
             if (this.rider_id != null) {
                 data.rider_id = this.rider_id;
@@ -1241,6 +1294,12 @@ export namespace com.lastmile.rider.proto {
             }
             if (this.trip_id != null) {
                 data.trip_id = this.trip_id;
+            }
+            if (this.driver_name != null) {
+                data.driver_name = this.driver_name;
+            }
+            if (this.fare != null) {
+                data.fare = this.fare;
             }
             return data;
         }
@@ -1254,6 +1313,10 @@ export namespace com.lastmile.rider.proto {
                 writer.writeString(2, this.driver_id);
             if (this.trip_id.length)
                 writer.writeString(3, this.trip_id);
+            if (this.driver_name.length)
+                writer.writeString(4, this.driver_name);
+            if (this.fare != 0)
+                writer.writeInt32(5, this.fare);
             if (!w)
                 return writer.getResultBuffer();
         }
@@ -1271,6 +1334,12 @@ export namespace com.lastmile.rider.proto {
                         break;
                     case 3:
                         message.trip_id = reader.readString();
+                        break;
+                    case 4:
+                        message.driver_name = reader.readString();
+                        break;
+                    case 5:
+                        message.fare = reader.readInt32();
                         break;
                     default: reader.skipField();
                 }

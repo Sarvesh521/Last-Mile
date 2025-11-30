@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { MapPin, Clock, Car, Plus, CheckCircle2, XCircle, Loader2, Navigation, Star, Phone } from 'lucide-react';
 import { toast } from 'sonner';
-import { riderApi, matchingApi, stationApi, tripApi, driverApi } from '../lib/api';
+import { riderApi, matchingApi, stationApi, tripApi, driverApi, userApi } from '../lib/api';
 import { MapView, PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
 import { useLoadScript } from '@react-google-maps/api';
@@ -116,7 +116,11 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                     (r.status === 4 || r.status === 'CANCELLED') ? 'cancelled' : 'pending',
             fare: r.fare || (Math.floor(Math.random() * 100) + 100),
             tripId: r.tripId || r.trip_id,
-            driver: r.driverId ? { id: r.driverId, name: 'Driver', rating: 5.0 } : undefined // Basic driver info if available
+            driver: r.driverId ? {
+              id: r.driverId,
+              name: r.driverName || r.driver_name || 'Driver',
+              rating: 5.0
+            } : undefined
           });
 
           const allRides = history.map(mapRide);
@@ -127,19 +131,42 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
             // If matched/active, restore driver info if possible
             if (active.driver && active.driver.id) {
-              driverApi.getDashboard(active.driver.id).then(res => {
-                if (res.data?.success) {
-                  setActiveRide((prev: any) => ({
-                    ...prev,
-                    driver: {
-                      ...prev.driver,
-                      name: res.data.driverId, // Ideally name should be in response
-                      rating: res.data.driverRating,
-                      currentLocation: res.data.currentLocation
-                    }
-                  }));
+              // Fetch driver name from User Service
+              userApi.getProfile(active.driver.id).then(userRes => {
+                if (userRes.data?.success) {
+                  const driverName = userRes.data.name;
+                  const driverPhone = userRes.data.phone;
+
+                  console.log("Driver Name:", driverName);
+                  console.log("Driver Phone:", driverPhone);
+
+                  // Also try to get rating/location from Driver Service
+                  driverApi.getDashboard(active.driver.id).then(driverRes => {
+                    const driverData = driverRes.data || {};
+                    setActiveRide((prev: any) => ({
+                      ...prev,
+                      driver: {
+                        ...prev.driver,
+                        name: driverName,
+                        phone: driverPhone,
+                        rating: driverData.rating || 4.8,
+                        currentLocation: driverData.currentLocation,
+                        vehicle: 'Toyota Prius' // Hardcoded for now as per previous code
+                      }
+                    }));
+                  }).catch(() => {
+                    // If driver service fails, at least we have the name
+                    setActiveRide((prev: any) => ({
+                      ...prev,
+                      driver: {
+                        ...prev.driver,
+                        name: driverName,
+                        phone: driverPhone
+                      }
+                    }));
+                  });
                 }
-              }).catch(() => { });
+              }).catch(err => console.error("Failed to fetch driver profile", err));
             }
           }
           setRides(allRides);
@@ -199,6 +226,12 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
     }
   }, [activeRide?.driver?.id, activeRide?.status]);
 
+  // Keep a ref to activeRide to avoid stale closures in stream listeners
+  const activeRideRef = useRef(activeRide);
+  useEffect(() => {
+    activeRideRef.current = activeRide;
+  }, [activeRide]);
+
   // Monitor Trip Updates
   useEffect(() => {
     if (activeRide?.tripId) {
@@ -213,11 +246,11 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
       stream.on('data', (response: any) => {
         const status = response.getStatus(); // Enum or string
         // Map proto status to frontend status
-        let newStatus = activeRide.status;
+        let newStatus = activeRideRef.current?.status; // Use ref here
         if (status === 1 || status === 'ACTIVE') newStatus = 'active';
         if (status === 2 || status === 'COMPLETED') newStatus = 'completed';
 
-        if (newStatus !== activeRide.status) {
+        if (newStatus && newStatus !== activeRideRef.current?.status) {
           setActiveRide((prev: any) => ({ ...prev, status: newStatus }));
           if (newStatus === 'completed') {
             handleCompleteRide();
@@ -311,8 +344,21 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         // Check for CONFIRMED status (Enum value 2 or string "CONFIRMED")
         if (status === 2 || status === 'CONFIRMED') {
           // Match confirmed!
+          // Match confirmed!
           let driverInfo: any = null;
-          try { driverInfo = (await driverApi.getDashboard(driverId)).data; } catch { }
+          let driverName = `Driver ${driverId.substring(0, 5)}`;
+          let driverPhone = '9999999999';
+
+          try {
+            // Fetch real driver name from User Service
+            const userRes = await userApi.getProfile(driverId);
+            if (userRes.data?.success) {
+              driverName = userRes.data.name;
+              driverPhone = userRes.data.phone;
+            }
+            // Fetch driver location/rating
+            driverInfo = (await driverApi.getDashboard(driverId)).data;
+          } catch { }
 
           // Use functional update to ensure we have latest state
           setRides(prev => {
@@ -327,10 +373,10 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                   tripId,
                   driver: {
                     id: driverId,
-                    name: `Driver ${driverId.substring(0, 5)}`,
+                    name: driverName,
                     vehicle: 'Toyota Prius',
-                    rating: 4.8,
-                    phone: '9999999999',
+                    rating: driverInfo?.rating || 4.8,
+                    phone: driverPhone,
                     currentLocation: driverInfo?.currentLocation ? {
                       latitude: driverInfo.currentLocation.latitude,
                       longitude: driverInfo.currentLocation.longitude,
@@ -500,11 +546,20 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                   onChange={(e) => setArrivalTime(e.target.value)}
                   required
                 />
-                <Button type="submit" disabled={matching || !metroStation || !destination} className="w-full mt-2">
+                <Button type="submit" disabled={matching || !metroStation || !destination || !!activeRide} className="w-full mt-2">
                   {matching ? (
                     <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Matching...</>
-                  ) : 'Request Ride'}
+                  ) : activeRide ? (
+                    'Ride in Progress'
+                  ) : (
+                    'Request Ride'
+                  )}
                 </Button>
+                {activeRide && (
+                  <p className="text-xs text-amber-600 mt-2 text-center">
+                    You have an active ride. Please complete or cancel it to request a new one.
+                  </p>
+                )}
               </div>
             </form>
             {matching && (
@@ -634,29 +689,20 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
                     {/* Action buttons */}
                     <div className="space-y-2 mt-4">
-                      {/* Removed Accept Button - Auto show map */}
+                      {/* Lifecycle buttons removed - Status driven by Driver Dashboard & Stream */}
 
-                      {!inRide && activeRide.status !== 'active' && activeRide.status === 'matched' && (
-                        <Button
-                          className="w-full"
-                          onClick={handleEnterRide}
-                        >
-                          <Car className="h-4 w-4 mr-2" />
-                          I'm in the Car
-                        </Button>
+                      {activeRide.status === 'matched' && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-center">
+                          <p className="text-sm text-blue-800 font-medium">
+                            Ride matched with a driver.
+                          </p>
+                          <p className="text-xs text-blue-600 mt-1">
+                            Cancellation is not available at this stage.
+                          </p>
+                        </div>
                       )}
 
-                      {inRide && activeRide.status === 'active' && (
-                        <Button
-                          className="w-full"
-                          onClick={handleCompleteRide}
-                        >
-                          <CheckCircle2 className="h-4 w-4 mr-2" />
-                          Complete Ride
-                        </Button>
-                      )}
-
-                      {activeRide.status !== 'completed' && activeRide.status !== 'cancelled' && activeRide.status !== 'matched' && activeRide.status !== 'active' && (
+                      {activeRide.status !== 'completed' && activeRide.status !== 'cancelled' && activeRide.status !== 'active' && activeRide.status !== 'matched' && (
                         <Button
                           variant="destructive"
                           className="w-full"
