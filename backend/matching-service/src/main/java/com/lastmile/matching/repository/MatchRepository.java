@@ -6,4 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface MatchRepository extends MongoRepository<Match, String> {
+    java.util.List<Match> findByStatus(String status);
 }

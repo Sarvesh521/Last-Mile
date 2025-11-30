@@ -186,6 +186,9 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
         String riderId = request.getRiderId();
         String driverId = request.getDriverId();
         String tripId = request.getTripId();
+        System.out.println("Rider ID: " + riderId);
+        System.out.println("Driver ID: " + driverId);
+        System.out.println("Trip ID: " + tripId);
         
         MatchedWithDriverResponse.Builder responseBuilder = MatchedWithDriverResponse.newBuilder();
         
@@ -197,7 +200,7 @@ public class RiderGrpcService extends RiderServiceGrpc.RiderServiceImplBase {
                 rr.setStatus(Rider.RideRequest.RideStatus.MATCHED);
                 rr.setDriverId(driverId);
                 rr.setTripId(tripId);
-                
+                System.out.println("Rider matched with driver successfully");   
                 riderRepository.save(rider);
                 
                 responseBuilder.setSuccess(true)

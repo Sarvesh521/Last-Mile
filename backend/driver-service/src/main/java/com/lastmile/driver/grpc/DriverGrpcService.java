@@ -28,6 +28,9 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
 
     @Autowired
     private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
     
     @Override
     public void registerRoute(RegisterRouteRequest request,
@@ -49,7 +52,18 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
                 .setRouteId(driver.getRouteId())
                 .setSuccess(true)
                 .setMessage("Route registered successfully")
+                .setMessage("Route registered successfully")
                 .build();
+        
+        // Notify Matching Service about new driver availability
+        try {
+            String token = AuthInterceptor.AUTH_TOKEN_KEY.get();
+            String event = "DRIVER_AVAILABLE," + driverId + "," + (token != null ? token : "");
+            redisTemplate.convertAndSend("driver-events", event);
+            System.out.println("DEBUG: Published DRIVER_AVAILABLE event: " + event);
+        } catch (Exception e) {
+            System.err.println("Failed to publish driver availability event: " + e.getMessage());
+        }
         
         responseObserver.onNext(response);
         responseObserver.onCompleted();
@@ -68,7 +82,7 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
                 .set("currentLocation.longitude", longitude)
                 .set("currentLocation.timestamp", System.currentTimeMillis());
         
-        long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
+        long modifiedCount = mongoTemplate.upsert(query, update, Driver.class).getModifiedCount();
         
         if (modifiedCount == 0 && !driverRepository.existsById(driverId)) {
              UpdateLocationResponse response = UpdateLocationResponse.newBuilder()
@@ -422,6 +436,24 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
         responseObserver.onCompleted();
     }
 
+    private List<TripInfo> getActiveTripsForDriver(String driverId) {
+        Driver driver = driverRepository.findById(driverId).orElse(null);
+        if (driver != null && driver.getActiveTrips() != null) {
+            return driver.getActiveTrips().stream().map(record -> TripInfo.newBuilder()
+                    .setTripId(record.getTripId())
+                    .setRiderId(record.getRiderId() != null ? record.getRiderId() : "")
+                    .setRiderName(record.getRiderName() != null ? record.getRiderName() : "Unknown")
+                    .setRiderRating(record.getRiderRating())
+                    .setPickupStation(record.getPickupStation())
+                    .setDestination(record.getDestination())
+                    .setStatus(record.getStatus())
+                    .setPickupTimestamp(record.getPickupTimestamp())
+                    .setFare(record.getFare())
+                    .build()).toList();
+        }
+        return new ArrayList<>();
+    }
+
     @Override
     public void monitorDriverDashboard(MonitorDriverDashboardRequest request,
                                        StreamObserver<MonitorDriverDashboardResponse> responseObserver) {
@@ -433,86 +465,105 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
             (io.grpc.stub.ServerCallStreamObserver<MonitorDriverDashboardResponse>) responseObserver;
 
         // Send initial state (Active Trips)
-        Driver driver = driverRepository.findById(driverId).orElse(null);
-        if (driver != null && driver.getActiveTrips() != null && !driver.getActiveTrips().isEmpty()) {
-            List<TripInfo> activeTripsProto = new ArrayList<>();
-            for (Driver.TripRecord record : driver.getActiveTrips()) {
-                activeTripsProto.add(TripInfo.newBuilder()
-                    .setTripId(record.getTripId())
-                    .setRiderId(record.getRiderId())
-                    .setRiderName(record.getRiderName() != null ? record.getRiderName() : "Unknown")
-                    .setRiderRating(record.getRiderRating())
-                    .setPickupStation(record.getPickupStation())
-                    .setDestination(record.getDestination())
-                    .setStatus(record.getStatus())
-                    .setPickupTimestamp(record.getPickupTimestamp())
-                    .setFare(record.getFare())
-                    .build());
-            }
-            
+        List<TripInfo> activeTrips = getActiveTripsForDriver(driverId);
+        if (!activeTrips.isEmpty()) {
             MonitorDriverDashboardResponse initialResponse = MonitorDriverDashboardResponse.newBuilder()
-                .addAllActiveTrips(activeTripsProto)
+                .addAllActiveTrips(activeTrips)
                 .build();
-            
             responseObserver.onNext(initialResponse);
         }
 
-        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
-            try {
-                String body = new String(message.getBody());
-                System.out.println("DEBUG: Received Redis message for driver " + driverId + ": " + body);
-                String[] parts = body.split(",", 2);
-                
-                if (parts.length >= 2) {
-                    String type = parts[0];
-                    String data = parts[1];
-                    System.out.println("DEBUG: Message Type: " + type + ", Data: " + data);
-                    
-                    MonitorDriverDashboardResponse.Builder responseBuilder = MonitorDriverDashboardResponse.newBuilder();
-                    
-                    if ("MATCH_REQUEST".equals(type)) {
-                        // Expected format: matchId::riderId::pickup::fare::dest
-                        String[] matchParts = data.split("::");
-                        System.out.println("DEBUG: MATCH_REQUEST parts count: " + matchParts.length);
-                        for(int i=0; i<matchParts.length; i++) System.out.println("DEBUG: matchParts["+i+"]: " + matchParts[i]);
+        // Create a thread pool for processing messages to avoid blocking the Redis listener thread
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newCachedThreadPool();
 
-                        if (matchParts.length >= 5) {
-                            System.out.println("DEBUG: Processing MATCH_REQUEST for driver " + driverId);
-                            responseBuilder.setMatchRequest(
-                                MatchRequest.newBuilder()
-                                    .setMatchId(matchParts[0])
-                                    .setRiderId(matchParts[1])
-                                    .setPickupStation(matchParts[2])
-                                    .setDestination(matchParts[4])
-                                    .setFare(Integer.parseInt(matchParts[3].trim()))
-                                    .build()
-                            );
-                        } else {
-                             System.err.println("DEBUG: Invalid MATCH_REQUEST format: " + data);
-                        }
-                    } else if ("TRIP_UPDATE".equals(type)) {
-                        String[] tripParts = data.split(",");
-                        if (tripParts.length >= 2) {
-                            System.out.println("DEBUG: Processing TRIP_UPDATE for driver " + driverId);
-                            responseBuilder.setTripUpdate(
-                                TripUpdate.newBuilder()
-                                    .setTripId(tripParts[0])
-                                    .setStatus(tripParts[1])
-                                    .build()
-                            );
-                        }
-                    }
+        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
+            executor.submit(() -> {
+                try {
+                    String body = new String(message.getBody());
+                    System.out.println("DEBUG: Received Redis message for driver " + driverId + ": " + body);
+                    String[] parts = body.split(",", 2);
                     
-                    synchronized (responseObserver) {
-                        responseObserver.onNext(responseBuilder.build());
+                    if (parts.length >= 2) {
+                        String type = parts[0];
+                        String data = parts[1];
+                        System.out.println("DEBUG: Message Type: " + type + ", Data: " + data);
+                        
+                        MonitorDriverDashboardResponse.Builder responseBuilder = MonitorDriverDashboardResponse.newBuilder();
+                        
+                        if ("MATCH_REQUEST".equals(type)) {
+                            // Expected format: matchId::riderId::pickup::fare::dest
+                            String[] matchParts = data.split("::");
+                            if (matchParts.length >= 5) {
+                                System.out.println("DEBUG: Processing MATCH_REQUEST for driver " + driverId);
+                                responseBuilder.setMatchRequest(
+                                    MatchRequest.newBuilder()
+                                        .setMatchId(matchParts[0])
+                                        .setRiderId(matchParts[1])
+                                        .setPickupStation(matchParts[2])
+                                        .setDestination(matchParts[4])
+                                        .setFare(Integer.parseInt(matchParts[3].trim()))
+                                        .build()
+                                );
+                            } else {
+                                 System.err.println("DEBUG: Invalid MATCH_REQUEST format: " + data);
+                            }
+                        } else if ("TRIP_UPDATE".equals(type)) {
+                            String[] tripParts = data.split(",");
+                            if (tripParts.length >= 2) {
+                                System.out.println("DEBUG: Processing TRIP_UPDATE for driver " + driverId);
+                                responseBuilder.setTripUpdate(
+                                    TripUpdate.newBuilder()
+                                        .setTripId(tripParts[0])
+                                        .setStatus(tripParts[1])
+                                        .build()
+                                );
+                                // Include updated active trips list
+                                responseBuilder.addAllActiveTrips(getActiveTripsForDriver(driverId));
+                                
+                                // Include available seats, earnings, and latest history in message field as JSON
+                                Driver driver = driverRepository.findById(driverId).orElse(null);
+                                if (driver != null) {
+                                    StringBuilder jsonBuilder = new StringBuilder();
+                                    jsonBuilder.append("{");
+                                    jsonBuilder.append("\"availableSeats\": ").append(driver.getAvailableSeats());
+                                    
+                                    // Add Total Earnings
+                                    int totalEarnings = driver.getTotalEarnings();
+                                    if (totalEarnings == 0 && driver.getRideHistory() != null) {
+                                        totalEarnings = driver.getRideHistory().stream().mapToInt(Driver.TripRecord::getFare).sum();
+                                    }
+                                    jsonBuilder.append(", \"totalEarnings\": ").append(totalEarnings);
+
+                                    // Add Latest History Item if completed
+                                    if ("COMPLETED".equalsIgnoreCase(tripParts[1]) && driver.getRideHistory() != null && !driver.getRideHistory().isEmpty()) {
+                                        // Assuming the last item is the most recent one we just moved
+                                        Driver.TripRecord lastTrip = driver.getRideHistory().get(driver.getRideHistory().size() - 1);
+                                        jsonBuilder.append(", \"latestTrip\": {");
+                                        jsonBuilder.append("\"id\": \"").append(lastTrip.getTripId()).append("\",");
+                                        jsonBuilder.append("\"riderName\": \"").append(lastTrip.getRiderName()).append("\",");
+                                        jsonBuilder.append("\"destination\": \"").append(lastTrip.getDestination()).append("\",");
+                                        jsonBuilder.append("\"fare\": ").append(lastTrip.getFare()).append(",");
+                                        jsonBuilder.append("\"date\": \"").append(LocalDate.now().toString()).append("\"");
+                                        jsonBuilder.append("}");
+                                    }
+                                    
+                                    jsonBuilder.append("}");
+                                    responseBuilder.setMessage(jsonBuilder.toString());
+                                }
+                            }
+                        }
+                        
+                        synchronized (responseObserver) {
+                            responseObserver.onNext(responseBuilder.build());
+                        }
+                    } else {
+                        System.err.println("DEBUG: Invalid message format received: " + body);
                     }
-                } else {
-                    System.err.println("DEBUG: Invalid message format received: " + body);
+                } catch (Exception e) {
+                    System.err.println("DEBUG: Error processing Redis message: " + e.getMessage());
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                System.err.println("DEBUG: Error processing Redis message: " + e.getMessage());
-                e.printStackTrace();
-            }
+            });
         };
 
         redisMessageListenerContainer.addMessageListener(listener, new org.springframework.data.redis.listener.ChannelTopic(channel));

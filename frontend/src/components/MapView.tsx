@@ -65,34 +65,34 @@ export const PlaceSearchBox = ({
         autocomplete.classList.add(
           "w-full", "h-10", "rounded-md", "border", "border-input", "bg-white", "text-black"
         );
-        
+
         Object.assign(autocomplete.style, {
-            width: '100%', height: '40px', backgroundColor: '#ffffff', color: '#000000',
-            '--gmp-px-color-surface': '#ffffff', '--gmp-px-color-text-primary': '#000000',
-            '--gmp-px-color-text-secondary': '#4b5563',
+          width: '100%', height: '40px', backgroundColor: '#ffffff', color: '#000000',
+          '--gmp-px-color-surface': '#ffffff', '--gmp-px-color-text-primary': '#000000',
+          '--gmp-px-color-text-secondary': '#4b5563',
         });
 
-      autocomplete.addEventListener("gmp-select", async ({ placePrediction }: any) => {
-        const place = placePrediction.toPlace();
-        if (!place) return;
+        autocomplete.addEventListener("gmp-select", async ({ placePrediction }: any) => {
+          const place = placePrediction.toPlace();
+          if (!place) return;
 
-        try {
-          await place.fetchFields({ fields: ["displayName", "formattedAddress", "location"] });
-          const location = place.location;
-          let name = place.displayName;
-          if (typeof name === "object" && name !== null && "text" in name) name = name.text;
-          const address = place.formattedAddress || name || "Selected Location";
+          try {
+            await place.fetchFields({ fields: ["displayName", "formattedAddress", "location"] });
+            const location = place.location;
+            let name = place.displayName;
+            if (typeof name === "object" && name !== null && "text" in name) name = name.text;
+            const address = place.formattedAddress || name || "Selected Location";
 
-          if (location) {
-            onPlaceSelect({
-              coords: { lat: location.lat(), lng: location.lng() },
-              address: address,
-            });
+            if (location) {
+              onPlaceSelect({
+                coords: { lat: location.lat(), lng: location.lng() },
+                address: address,
+              });
+            }
+          } catch (err) {
+            console.error("Error fetching place details:", err);
           }
-        } catch (err) {
-          console.error("Error fetching place details:", err);
-        }
-      });
+        });
         inputContainerRef.current.appendChild(autocomplete);
       }
     };
@@ -128,10 +128,10 @@ export function MapView({
 
   const [originPlace, setOriginPlace] = useState<{ coords?: LatLng; address?: string } | null>(null);
   const [destPlace, setDestPlace] = useState<{ coords?: LatLng; address?: string } | null>(null);
-  
+
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
-  
+
   // NEW: State to store Metro Stations
   const [stations, setStations] = useState<Station[]>([]);
   // NEW: State for InfoWindow (optional, if you want to click a station)
@@ -173,6 +173,10 @@ export function MapView({
           }
         }
       );
+    } else if (!showRoute) {
+      // Clear route and stations if showRoute is false
+      setDirections(null);
+      setStations([]);
     }
   }, [isLoaded, showRoute, destination, currentLocation]);
 
@@ -190,7 +194,7 @@ export function MapView({
     }
     setLoadingRoute(true);
     // Clear previous stations when new route requested
-    setStations([]); 
+    setStations([]);
 
     const ds = new google.maps.DirectionsService();
     ds.route(
@@ -242,14 +246,14 @@ export function MapView({
           summary.end_address,
           routePoints
         );
-        
+
         console.log("Stations received:", response.data);
-        
+
         // UPDATE STATE WITH RECEIVED STATIONS
         if (response.data && response.data.stations) {
-            setStations(response.data.stations);
+          setStations(response.data.stations);
         } else {
-            console.warn("No stations found in response");
+          console.warn("No stations found in response");
         }
 
       } catch (error) {
@@ -261,8 +265,8 @@ export function MapView({
       sendToBackend();
     }
 
-  }, [directions]); 
-  
+  }, [directions]);
+
   if (!isLoaded) {
     return (
       <Card className="h-full min-h-[400px] p-4 flex items-center justify-center">

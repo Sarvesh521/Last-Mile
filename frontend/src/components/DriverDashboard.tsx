@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
-import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock, XCircle } from 'lucide-react';
+import { MapPin, Users, CheckCircle2, Plus, Activity, DollarSign, Star, Clock, XCircle, Car } from 'lucide-react';
 import { toast } from 'sonner';
 import { MapView, PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
@@ -66,18 +66,20 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
   // Refs for Cleanup
   const streamRef = useRef<any>(null);
+  const lastUpdateRef = useRef<number>(0);
   const [locationUpdateInterval, setLocationUpdateInterval] = useState<any>(null);
   const [isLocationResolved, setIsLocationResolved] = useState(false);
 
   // --- 1. Initial Data Load (REST) ---
   // We only do this ONCE on mount to populate history/earnings. 
   // --- 1. Initial Data Load (REST) ---
-  const loadInitialData = async () => {
+  const loadInitialData = useCallback(async () => {
     try {
       // Restore route from local storage if exists
       const storedRouteRaw = localStorage.getItem(ROUTE_STORAGE_KEY);
-      if (storedRouteRaw) {
-        setActiveRoute(JSON.parse(storedRouteRaw));
+      let storedRoute = storedRouteRaw ? JSON.parse(storedRouteRaw) : null;
+      if (storedRoute) {
+        setActiveRoute(storedRoute);
       }
 
       // Fetch baseline data
@@ -100,23 +102,52 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
         // Set Active Route if backend has one
         if (data.destination) {
+          let destCoords = storedRoute?.destinationCoords;
+
+          // If we don't have coords (e.g. cleared storage), try to geocode
+          if (!destCoords && window.google && isLoaded) {
+            try {
+              const geocoder = new window.google.maps.Geocoder();
+              const result = await geocoder.geocode({ address: data.destination });
+              if (result.results[0]) {
+                const loc = result.results[0].geometry.location;
+                destCoords = { lat: loc.lat(), lng: loc.lng() };
+              }
+            } catch (e) {
+              console.error("Failed to geocode destination on reload", e);
+            }
+          }
+
           const routeData = {
             id: 'route_backend',
             driverId: user.id,
             destination: data.destination,
             availableSeats: data.availableSeats,
-            destinationCoords: activeRoute?.destinationCoords,
+            destinationCoords: destCoords,
           };
-          setActiveRoute(routeData);
-          setDestination(data.destination);
-          // If backend says we have a route, start pushing location immediately
-          startLocationUpdates();
+
+          // Only update if we have coords, otherwise MapView won't work anyway
+          if (destCoords) {
+            setActiveRoute(routeData);
+            setDestination(data.destination);
+            setDestinationCoords(destCoords);
+            // Update storage so next time it's faster
+            localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify(routeData));
+            startLocationUpdates();
+          }
+        } else {
+          // Backend has no route, so clear local if any (sync)
+          if (storedRoute) {
+            setActiveRoute(null);
+            localStorage.removeItem(ROUTE_STORAGE_KEY);
+          }
         }
+        setTrips(data.activeTrips || []);
       }
-    } catch (e) {
-      console.error("Failed to load initial dashboard data", e);
+    } catch (error) {
+      console.error("DEBUG: Failed to reload dashboard data", error);
     }
-  };
+  }, [user.id, ROUTE_STORAGE_KEY, isLoaded]);
 
   useEffect(() => {
     // Geolocation Init
@@ -125,18 +156,18 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
         (pos) => {
           setCurrentLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
           setIsLocationResolved(true);
-          loadInitialData();
+          loadInitialData().catch((err) => console.error("Failed to load dashboard", err));
         },
         () => {
           setIsLocationResolved(true); // Fallback to default
-          loadInitialData();
+          loadInitialData().catch((err) => console.error("Failed to load dashboard", err));
         }
       );
     } else {
       setIsLocationResolved(true);
-      loadInitialData();
+      loadInitialData().catch((err) => console.error("Failed to load dashboard", err));
     }
-  }, [user.id]);
+  }, [user.id, loadInitialData]);
 
   // --- 2. Server-Side Streaming (gRPC) ---
   // Listens for updates (New Rides, Trip Status). No polling.
@@ -180,23 +211,14 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
         const tripId = tripUpdate.getTripId();
         const status = tripUpdate.getStatus();
         console.log(`Trip Update: ${tripId} -> ${status}`);
-
-        setTrips(prev => {
-          const exists = prev.find(t => t.id === tripId);
-          if (exists) {
-            return prev.map(t => t.id === tripId ? { ...t, status } : t);
-          } else {
-            // New trip detected (e.g. just accepted), reload to get full details
-            console.log("New trip detected, reloading dashboard...");
-            loadInitialData();
-            return prev;
-          }
-        });
+        // No need to manually update state here if we rely on the activeTrips list below,
+        // but we can keep it for immediate feedback or toast notifications.
       }
 
-      // C. Handle Active Trips List Refresh
+      // C. Handle Active Trips List Refresh (Primary Source of Truth)
       const activeTripsList = response.getActiveTripsList();
       if (activeTripsList) {
+        // console.log("DEBUG: Received active trips from stream:", activeTripsList.length);
         const active = activeTripsList.map((t: any) => ({
           id: t.getTripId(),
           riderId: t.getRiderId(),
@@ -208,7 +230,89 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
           pickupTime: t.getPickupTimestamp(),
           fare: t.getFare(),
         }));
-        setTrips(active);
+
+        // Prevent unnecessary re-renders (fixes shaking) & Throttle updates (15s)
+        setTrips(prev => {
+          const now = Date.now();
+          const timeDiff = now - lastUpdateRef.current;
+
+          // Always update if list length changes (new trip or completed trip)
+          if (prev.length !== active.length) {
+            lastUpdateRef.current = now;
+            return active;
+          }
+
+          // Otherwise, only update every 15 seconds to prevent visual jitter
+          if (timeDiff > 15000) {
+            // Check if content actually changed to avoid even 15s re-renders if data is same
+            if (JSON.stringify(prev) !== JSON.stringify(active)) {
+              lastUpdateRef.current = now;
+              return active;
+            }
+          }
+
+          // If we have a status change (e.g. scheduled -> active), we MUST update immediately
+          const statusChanged = prev.some((p, i) => active[i] && p.status !== active[i].status);
+          if (statusChanged) {
+            lastUpdateRef.current = now;
+            return active;
+          }
+
+          return prev;
+        });
+      }
+
+      // D. Handle Driver Status Updates (Available Seats, Earnings, History) via Message Field
+      const msg = response.getMessage();
+      if (msg && msg.startsWith('{')) {
+        try {
+          const data = JSON.parse(msg);
+
+          // 1. Available Seats
+          if (data.availableSeats !== undefined) {
+            setActiveRoute((prev: any) => {
+              if (!prev) return { availableSeats: data.availableSeats };
+              if (prev.availableSeats === data.availableSeats) return prev;
+              return { ...prev, availableSeats: data.availableSeats };
+            });
+            setAvailableSeats(data.availableSeats);
+          }
+
+          // 2. Total Earnings
+          if (data.totalEarnings !== undefined) {
+            setTotalEarnings(data.totalEarnings);
+          }
+
+          // 3. Latest Trip History (for Dropoff)
+          if (data.latestTrip) {
+            const newHistoryItem = {
+              id: data.latestTrip.id,
+              date: data.latestTrip.date,
+              riderName: data.latestTrip.riderName,
+              destination: data.latestTrip.destination,
+              fare: data.latestTrip.fare,
+              rating: 0, // Pending
+              duration: 'Just now'
+            };
+            setRideHistory(prev => {
+              // Avoid duplicates
+              if (prev.some(h => h.id === newHistoryItem.id)) return prev;
+              return [newHistoryItem, ...prev];
+            });
+
+            // Trigger Rating Dialog if we just completed this trip
+            // We can infer this if the trip was recently in our active list
+            // But for now, let's rely on the user flow or just show it if we have a new history item
+            // Actually, handleDropoff sets selectedRiderForRating, so we just need to open the dialog
+            // We can do that here if we want, but handleDropoff already does it.
+            // However, handleDropoff might have cleared the trip from active list already?
+            // No, handleDropoff calls API, then stream updates.
+            // Let's keep the dialog opening in handleDropoff for now as it's UI interaction.
+          }
+
+        } catch (e) {
+          // console.error("Failed to parse message JSON", e);
+        }
       }
     });
 
@@ -232,7 +336,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
     }
 
     const interval = setInterval(async () => {
-      // 1. Jitter location slightly (Simulate movement)
+      // 1. Simulate movement (every 15s)
       setCurrentLocation(prev => ({
         lat: prev.lat + (Math.random() - 0.5) * 0.001,
         lng: prev.lng + (Math.random() - 0.5) * 0.001,
@@ -247,7 +351,7 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       } catch {
         // ignore errors to prevent spamming console
       }
-    }, 10000); // 10 seconds
+    }, 15000); // 15 seconds
 
     setLocationUpdateInterval(interval);
   };
@@ -296,6 +400,12 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
       }
 
       // 2. Register with Backend
+      // CRITICAL FIX: Ensure location is updated BEFORE registering route so Matching Service can calculate fare
+      await driverApi.updateLocation(user.id, {
+        latitude: currentLocation.lat,
+        longitude: currentLocation.lng
+      });
+
       await driverApi.registerRoute(user.id, {
         destination,
         availableSeats,
@@ -357,7 +467,11 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
         longitude: currentLocation.lng
       });
       toast.success('Pickup confirmed!');
-      // Stream will handle UI update
+
+      // Optimistic Update: Update trip status immediately
+      setTrips(prev => prev.map(t =>
+        t.id === tripId ? { ...t, status: 'active' } : t
+      ));
     } catch (error) {
       toast.error('Failed to confirm pickup');
     }
@@ -371,9 +485,11 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
         longitude: currentLocation.lng
       });
 
-      if (trip) setTotalEarnings(prev => prev + trip.fare);
+      // Logic moved to Backend (Stream Update)
+      // We only handle UI triggers here
 
       toast.success('Drop-off confirmed!');
+
       if (trip) {
         setSelectedRiderForRating(trip);
         setRatingDialogOpen(true);
@@ -417,6 +533,10 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                 <div className="flex items-center gap-1">
                   <DollarSign className="h-5 w-5 text-green-500" />
                   <span>₹{totalEarnings} Earned</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Users className="h-5 w-5 text-blue-500" />
+                  <span>{activeRoute?.availableSeats ?? '0'} Seats Avail.</span>
                 </div>
               </div>
             </div>
@@ -480,10 +600,23 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
                 {activeRoute && (
                   <div className="mt-4 p-3 bg-blue-50 text-blue-800 rounded flex justify-between">
                     <span>Heading to: <strong>{activeRoute.destination}</strong></span>
-                    <Button variant="ghost" size="sm" onClick={() => {
+                    <Button variant="ghost" size="sm" onClick={async () => {
                       localStorage.removeItem(ROUTE_STORAGE_KEY);
                       setActiveRoute(null);
+                      setTrips([]);
                       if (locationUpdateInterval) clearInterval(locationUpdateInterval);
+
+                      // Clear route on backend so it doesn't persist on reload
+                      try {
+                        await driverApi.registerRoute(user.id, {
+                          destination: '',
+                          availableSeats: 0,
+                          metroStations: []
+                        });
+                        toast.success("Route ended");
+                      } catch (e) {
+                        console.error("Failed to clear route on backend", e);
+                      }
                     }}>End Route</Button>
                   </div>
                 )}
@@ -560,43 +693,69 @@ export function DriverDashboard({ user }: DriverDashboardProps) {
 
       {/* Incoming Match Dialog */}
       <Dialog open={!!incomingMatch} onOpenChange={(open) => !open && setIncomingMatch(null)}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[600px] border-l-4 border-l-blue-600 shadow-2xl">
           <DialogHeader>
-            <DialogTitle>New Ride Request!</DialogTitle>
-            <DialogDescription>A rider is looking for a ride near you.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2 text-xl text-blue-700">
+              <Car className="h-6 w-6" />
+              New Ride Request!
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              A rider is looking for a ride near you.
+            </DialogDescription>
           </DialogHeader>
+
           {incomingMatch && (
-            <div className="space-y-4 py-4">
-              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
-                <DollarSign className="h-8 w-8 text-green-600" />
+            <div className="space-y-6 py-4">
+              <div className="flex items-center justify-between bg-green-50 p-4 rounded-lg border border-green-100">
                 <div>
-                  <p className="text-sm text-gray-500">Estimated Fare</p>
-                  <p className="text-xl font-bold text-green-700">₹{incomingMatch.fare}</p>
+                  <p className="text-sm text-green-800 font-medium">Estimated Fare</p>
+                  <p className="text-3xl font-bold text-green-700">₹{incomingMatch.fare}</p>
                 </div>
+                <Badge className="bg-green-600 text-white px-3 py-1 text-sm">Cash / UPI</Badge>
               </div>
-              <div className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <MapPin className="h-5 w-5 text-green-500 mt-1" />
+
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 bg-blue-100 p-2 rounded-full">
+                    <MapPin className="h-5 w-5 text-blue-600" />
+                  </div>
                   <div>
-                    <p className="text-sm text-gray-500">Pickup</p>
-                    <p className="font-medium">{incomingMatch.pickupStation}</p>
+                    <p className="text-sm text-gray-500 font-medium">Pickup</p>
+                    <p className="text-lg font-semibold text-gray-900">{incomingMatch.pickupStation}</p>
                   </div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <MapPin className="h-5 w-5 text-red-500 mt-1" />
+
+                <div className="flex items-center justify-center">
+                  <div className="h-8 w-0.5 bg-gray-200"></div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 bg-red-100 p-2 rounded-full">
+                    <MapPin className="h-5 w-5 text-red-600" />
+                  </div>
                   <div>
-                    <p className="text-sm text-gray-500">Destination</p>
-                    <p className="font-medium">{incomingMatch.destination}</p>
+                    <p className="text-sm text-gray-500 font-medium">Destination</p>
+                    <p className="text-lg font-semibold text-gray-900">{incomingMatch.destination}</p>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          <DialogFooter className="flex gap-2 sm:justify-between">
-            <Button variant="outline" className="flex-1" onClick={handleDeclineMatch}>
+
+          <DialogFooter className="gap-3 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={handleDeclineMatch}
+              className="flex-1 h-12 text-base border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+            >
+              <XCircle className="mr-2 h-5 w-5" />
               Decline
             </Button>
-            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={handleAcceptMatch}>
+            <Button
+              className="flex-1 h-12 text-base !bg-blue-600 hover:!bg-blue-700 font-bold shadow-lg transition-all hover:scale-105 !text-white"
+              onClick={handleAcceptMatch}
+            >
+              <CheckCircle2 className="mr-2 h-5 w-5" />
               Accept Ride
             </Button>
           </DialogFooter>

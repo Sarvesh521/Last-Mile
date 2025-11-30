@@ -7,10 +7,9 @@ import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { MapPin, Clock, Car, Plus, CheckCircle2, XCircle, Loader2, Navigation, Star, Phone } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { riderApi, matchingApi, stationApi, tripApi, driverApi } from '../lib/api';
-import { LiveMap } from './LiveMap';
-import { PlaceSearchBox } from './MapView';
+import { MapView, PlaceSearchBox } from './MapView';
 import { RatingDialog } from './RatingDialog';
 import { useLoadScript } from '@react-google-maps/api';
 import { matchingClient, locationClient, tripClient, getAuthMetadata } from '../lib/grpc';
@@ -43,7 +42,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   const [activeRide, setActiveRide] = useState<any>(null);
   const [ratingDialogOpen, setRatingDialogOpen] = useState(false);
   const [selectedDriverForRating, setSelectedDriverForRating] = useState<any>(null);
-  const [rideAccepted, setRideAccepted] = useState(false);
+  // const [rideAccepted, setRideAccepted] = useState(false); // Removed as per request
   const [inRide, setInRide] = useState(false);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number, longitude: number } | undefined>(undefined);
 
@@ -166,12 +165,14 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
       const req = new MonitorDriverLocationRequest();
       req.setDriverId(activeRide.driver.id);
 
+      console.log("📡 Connecting to Location Stream for driver:", activeRide.driver.id);
       const stream = locationClient.monitorDriverLocation(req, getAuthMetadata());
       locationStreamRef.current = stream;
 
       stream.on('data', (response: any) => {
         const lat = response.getLatitude();
         const lng = response.getLongitude();
+        console.log("📍 Driver Location Update:", lat, lng);
         setDriverLocation({ latitude: lat, longitude: lng });
 
         // Update active ride driver location
@@ -305,38 +306,51 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
         const driverId = response.getDriverId();
         const tripId = response.getTripId();
 
-        console.log('Match Update:', { status, matchId, driverId, tripId });
+        console.log('DEBUG: Match Update Received:', { status, matchId, driverId, tripId });
 
-        if (status === 1 || status === 'MATCHED' || status === 'CONFIRMED') {
-          // Match found!
-
+        // Check for CONFIRMED status (Enum value 2 or string "CONFIRMED")
+        if (status === 2 || status === 'CONFIRMED') {
+          // Match confirmed!
           let driverInfo: any = null;
           try { driverInfo = (await driverApi.getDashboard(driverId)).data; } catch { }
 
-          const matchedRide = {
-            ...pendingRide,
-            status: 'matched',
-            tripId,
-            driver: {
-              id: driverId,
-              name: `Driver ${driverId.substring(0, 5)}`,
-              vehicle: 'Toyota Prius',
-              rating: 4.8,
-              phone: '9999999999',
-              currentLocation: driverInfo?.currentLocation ? {
-                latitude: driverInfo.currentLocation.latitude,
-                longitude: driverInfo.currentLocation.longitude,
-              } : undefined,
-            },
-          };
-          setRides(prev => prev.map(r => r.id === pendingRide.id ? matchedRide : r));
-          setActiveRide(matchedRide);
-          toast.success('Match found! Your driver is on the way.');
+          // Use functional update to ensure we have latest state
+          setRides(prev => {
+            console.log("DEBUG: Updating rides. Current count:", prev.length);
+            // Match strictly by ID (rideRequestId should equal matchId)
+            return prev.map(r => {
+              if (r.id === matchId) {
+                console.log("DEBUG: Found ride to update:", r.id);
+                const matchedRide = {
+                  ...r,
+                  status: 'matched',
+                  tripId,
+                  driver: {
+                    id: driverId,
+                    name: `Driver ${driverId.substring(0, 5)}`,
+                    vehicle: 'Toyota Prius',
+                    rating: 4.8,
+                    phone: '9999999999',
+                    currentLocation: driverInfo?.currentLocation ? {
+                      latitude: driverInfo.currentLocation.latitude,
+                      longitude: driverInfo.currentLocation.longitude,
+                    } : undefined,
+                  },
+                };
+                // Also update activeRide if it matches
+                setActiveRide(matchedRide);
+                return matchedRide;
+              }
+              return r;
+            });
+          });
 
-          // If confirmed (trip created), stop match stream? Maybe keep it for cancellation updates.
+          toast.success('Match confirmed! Your driver is on the way.');
+          stream.cancel();
+
         } else if (status === 3 || status === 'CANCELLED') {
-          setRides(prev => prev.map(r => r.id === pendingRide.id ? { ...r, status: 'cancelled' } : r));
-          setActiveRide(null);
+          setRides(prev => prev.map(r => r.id === matchId ? { ...r, status: 'cancelled' } : r));
+          if (activeRide?.id === matchId) setActiveRide(null);
           toast.error('Ride request was cancelled.');
           stream.cancel();
         }
@@ -356,10 +370,11 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   };
 
 
-  const handleAcceptRide = () => {
-    setRideAccepted(true);
-    toast.success('Ride accepted! You can track your driver on the map.');
-  };
+  // Removed handleAcceptRide as the user wants auto-acceptance logic
+  // const handleAcceptRide = () => {
+  //   setRideAccepted(true);
+  //   toast.success('Ride accepted! You can track your driver on the map.');
+  // };
 
   const handleEnterRide = async () => {
     setInRide(true);
@@ -375,6 +390,9 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
   };
 
   const handleCompleteRide = async () => {
+    // Prevent loop if already completed or dialog open
+    if (ratingDialogOpen || activeRide?.status === 'completed') return;
+
     if (activeRide?.driver) {
       try {
         if (activeRide.tripId) {
@@ -384,7 +402,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
       setSelectedDriverForRating(activeRide.driver);
       setRatingDialogOpen(true);
       setActiveRide((prev: any) => ({ ...prev, status: 'completed' }));
-      setRideAccepted(false);
+      // setRideAccepted(false);
       setInRide(false);
       toast.success('Ride completed! Please rate your driver.');
     }
@@ -406,7 +424,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
       setRides(prev => prev.filter((ride: any) => ride.id !== rideId));
       if (activeRide?.id === rideId) {
         setActiveRide(null);
-        setRideAccepted(false);
+        // setRideAccepted(false);
         setInRide(false);
       }
       toast.success('Ride request cancelled successfully');
@@ -616,17 +634,9 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
 
                     {/* Action buttons */}
                     <div className="space-y-2 mt-4">
-                      {!rideAccepted && activeRide.status === 'matched' && (
-                        <Button
-                          className="w-full"
-                          onClick={handleAcceptRide}
-                        >
-                          <CheckCircle2 className="h-4 w-4 mr-2" />
-                          Accept Ride
-                        </Button>
-                      )}
+                      {/* Removed Accept Button - Auto show map */}
 
-                      {rideAccepted && !inRide && activeRide.status !== 'active' && (
+                      {!inRide && activeRide.status !== 'active' && activeRide.status === 'matched' && (
                         <Button
                           className="w-full"
                           onClick={handleEnterRide}
@@ -646,7 +656,7 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                         </Button>
                       )}
 
-                      {activeRide.status !== 'completed' && activeRide.status !== 'cancelled' && (
+                      {activeRide.status !== 'completed' && activeRide.status !== 'cancelled' && activeRide.status !== 'matched' && activeRide.status !== 'active' && (
                         <Button
                           variant="destructive"
                           className="w-full"
@@ -708,8 +718,8 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
               </CardContent>
             </Card>
 
-            {/* Map View */}
-            {activeRide && rideAccepted && (
+            {/* Map View - Always show if matched or active */}
+            {activeRide && (activeRide.status === 'matched' || activeRide.status === 'active') && (
               <Card>
                 <CardHeader>
                   <CardTitle>Live Tracking</CardTitle>
@@ -718,10 +728,14 @@ export function RiderDashboard({ user }: RiderDashboardProps) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <LiveMap
-                    driverLocation={activeRide.driver?.currentLocation}
-                    destination={activeRide.destinationCoords}
-                  />
+                  <div className="h-[400px]">
+                    <MapView
+                      isLoaded={isLoaded}
+                      currentLocation={activeRide.driver?.currentLocation}
+                      destination={activeRide.destinationCoords ? { ...activeRide.destinationCoords, name: activeRide.destination } : undefined}
+                      showRoute={true}
+                    />
+                  </div>
                 </CardContent>
               </Card>
             )}

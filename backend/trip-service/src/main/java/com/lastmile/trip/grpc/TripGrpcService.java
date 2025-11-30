@@ -92,7 +92,7 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             
             trip = tripRepository.save(trip);
 
-            publishTripUpdate(trip.getTripId(), "SCHEDULED", driverId, riderId);
+
 
             // Fetch Rider Info for Rating
             double riderRating = 0.0;
@@ -136,6 +136,8 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
                 System.err.println("Failed to notify driver: " + e.getMessage());
             }
 
+            publishTripUpdate(trip.getTripId(), "SCHEDULED", driverId, riderId);
+
             // Notify Rider
             try {
                 attachToken(riderStub).matchedWithDriver(MatchedWithDriverRequest.newBuilder()
@@ -146,7 +148,7 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             } catch (Exception e) {
                 System.err.println("Failed to notify rider: " + e.getMessage());
             }
-            
+            System.out.println("Trip created successfully");    
             responseBuilder.setTripId(trip.getTripId())
                     .setSuccess(true)
                     .setMessage("Trip created successfully");
@@ -205,11 +207,11 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             trip.setStatus(Trip.TripStatus.ACTIVE);
             tripRepository.save(trip);
 
-            publishTripUpdate(tripId, "ACTIVE", trip.getDriverId(), trip.getRiderId());
+
 
             // Notify Driver
             try {
-                driverStub.startTrip(StartTripRequest.newBuilder()
+                attachToken(driverStub).startTrip(StartTripRequest.newBuilder()
                     .setDriverId(trip.getDriverId())
                     .setTripId(tripId)
                     .build());
@@ -217,9 +219,11 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
                 System.err.println("Failed to start trip on driver service: " + e.getMessage());
             }
 
+            publishTripUpdate(tripId, "ACTIVE", trip.getDriverId(), trip.getRiderId());
+
             // Notify Rider
             try {
-                riderStub.rideStarted(RideStartedRequest.newBuilder()
+                attachToken(riderStub).rideStarted(RideStartedRequest.newBuilder()
                     .setRiderId(trip.getRiderId())
                     .setTripId(tripId)
                     .build());
@@ -256,11 +260,11 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
             }
             tripRepository.save(trip);
 
-            publishTripUpdate(tripId, "COMPLETED", trip.getDriverId(), trip.getRiderId());
+
 
             // Notify Driver
             try {
-                driverStub.completeActiveTrip(CompleteActiveTripRequest.newBuilder()
+                attachToken(driverStub).completeActiveTrip(CompleteActiveTripRequest.newBuilder()
                     .setDriverId(trip.getDriverId())
                     .setTripId(tripId)
                     .build());
@@ -268,9 +272,11 @@ public class TripGrpcService extends TripServiceGrpc.TripServiceImplBase {
                 System.err.println("Failed to complete trip on driver service: " + e.getMessage());
             }
 
+            publishTripUpdate(tripId, "COMPLETED", trip.getDriverId(), trip.getRiderId());
+
             // Notify Rider
             try {
-                riderStub.rideCompleted(RideCompletedRequest.newBuilder()
+                attachToken(riderStub).rideCompleted(RideCompletedRequest.newBuilder()
                     .setRiderId(trip.getRiderId())
                     .setTripId(tripId)
                     .setDropoffTime(trip.getDropoffTime())
