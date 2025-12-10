@@ -138,17 +138,24 @@ export function MapView({
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
 
   const mapRef = useRef<google.maps.Map | null>(null);
+  const hasCentered = useRef(false);
 
   // Handle Internal Geolocation
   useEffect(() => {
     if (isValidLatLng(propCurrentLocation)) {
-      setMapCenter(propCurrentLocation);
-    } else if (navigator.geolocation) {
+      if (!hasCentered.current) {
+        setMapCenter(propCurrentLocation);
+        hasCentered.current = true;
+      }
+    } else if (navigator.geolocation && !hasCentered.current) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setInternalCurrentLocation(coords);
-          if (!isValidLatLng(propCurrentLocation)) setMapCenter(coords);
+          if (!isValidLatLng(propCurrentLocation) && !hasCentered.current) {
+            setMapCenter(coords);
+            hasCentered.current = true;
+          }
         },
         (err) => console.warn("Geolocation error:", err),
         { enableHighAccuracy: true }
@@ -156,9 +163,18 @@ export function MapView({
     }
   }, [propCurrentLocation]);
 
+  const currentRouteDestRef = useRef<string | null>(null);
+
   // Handle prop-based routing
   useEffect(() => {
     if (isLoaded && showRoute && destination && isValidLatLng(destination) && isValidLatLng(currentLocation)) {
+      // Check if destination changed to reset fitBounds state
+      const destKey = `${destination.lat},${destination.lng}`;
+      if (currentRouteDestRef.current !== destKey) {
+        // Destination changed, allow fitBounds
+        // We update the ref inside the callback on success
+      }
+
       const ds = new google.maps.DirectionsService();
       ds.route(
         {
@@ -169,7 +185,12 @@ export function MapView({
         (result, status) => {
           if (status === google.maps.DirectionsStatus.OK && result) {
             setDirections(result);
-            if (mapRef.current) mapRef.current.fitBounds(result.routes[0].bounds);
+
+            // Only fit bounds if this is a new destination
+            if (mapRef.current && currentRouteDestRef.current !== destKey) {
+              mapRef.current.fitBounds(result.routes[0].bounds);
+              currentRouteDestRef.current = destKey;
+            }
           }
         }
       );
@@ -177,11 +198,13 @@ export function MapView({
       // Clear route and stations if showRoute is false
       setDirections(null);
       setStations([]);
+      currentRouteDestRef.current = null;
     }
   }, [isLoaded, showRoute, destination, currentLocation]);
 
   const onLoadMap = useCallback((map: google.maps.Map) => {
     mapRef.current = map;
+    map.setZoom(14);
   }, []);
 
   const requestRoute = async () => {
@@ -314,7 +337,6 @@ export function MapView({
         <GoogleMap
           mapContainerStyle={containerStyle}
           center={isValidLatLng(mapCenter) ? mapCenter : { lat: 28.6139, lng: 77.209 }}
-          zoom={14}
           onLoad={onLoadMap}
           options={{
             streetViewControl: false,
@@ -386,7 +408,7 @@ export function MapView({
             <DirectionsRenderer
               directions={directions}
               options={{
-                preserveViewport: false,
+                preserveViewport: true,
                 polylineOptions: {
                   strokeColor: "#1976D2",
                   strokeWeight: 6,
