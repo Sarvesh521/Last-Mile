@@ -89,55 +89,69 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
     }
 
     private void processPendingMatches(String driverId, String token) {
-        System.out.println("DEBUG: Processing pending matches for new driver: " + driverId);
+        System.out.println("DEBUG: Processing pending matches for new driver: " + driverId + " with token length: " + (token != null ? token.length() : "null"));
         List<Match> pendingMatches = matchRepository.findByStatus("PENDING");
-        System.out.println("DEBUG: Found " + pendingMatches.size() + " pending matches for driver " + driverId);
+        System.out.println("DEBUG: Found " + pendingMatches.size() + " pending matches total");
         if (pendingMatches.isEmpty()) return;
 
         try {
             // Fetch driver info
+            System.out.println("DEBUG: Fetching driver info for " + driverId);
             com.lastmile.driver.proto.GetDriverInfoResponse driverInfo = attachToken(driverStub, token).getDriverInfo(
                 com.lastmile.driver.proto.GetDriverInfoRequest.newBuilder().setDriverId(driverId).build()
             );
 
             if (!driverInfo.getSuccess()) {
-                 System.out.println("DEBUG: Could not fetch info for driver " + driverId);
+                 System.out.println("DEBUG: Could not fetch info for driver " + driverId + ". Success=false");
                  return;
             }
 
-            // Convert to DriverInfo object for reuse in findDriver logic (or similar logic)
-            // Since findDriver searches ALL drivers, we can just check this specific driver against pending matches.
-            
+            // Track available seats locally to prevent over-matching in this loop
+            int currentSeats = driverInfo.getAvailableSeats();
+            System.out.println("DEBUG: Driver " + driverId + " has " + currentSeats + " seats available.");
+
             for (Match match : pendingMatches) {
+                if (currentSeats <= 0) {
+                    System.out.println("DEBUG: No more seats available for driver " + driverId + ". Stopping match loop.");
+                    break;
+                }
+
                 String pickup = match.getPickupStation();
                 String dest = match.getDestination();
-                System.out.println("DEBUG: Checking match " + match.getMatchId() + " for driver " + driverId);
-                System.out.println("DEBUG: pickup: " + pickup + ", dest: " + dest);
-                System.out.println("DEBUG: driverInfo: " + driverInfo.getDestination());
+                System.out.println("DEBUG: Checking match " + match.getMatchId() + " (Rider: " + match.getRiderId() + ")");
+                
                 // Check if this driver matches
                 boolean stationMatch = driverInfo.getMetroStationsList().contains(pickup);
-                boolean destMatch = driverInfo.getDestination().toLowerCase().contains(dest.toLowerCase()) || 
-                                    dest.toLowerCase().contains(driverInfo.getDestination().toLowerCase());
                 
-                if (stationMatch && destMatch && driverInfo.getAvailableSeats() > 0) {
+                String driverDest = driverInfo.getDestination().toLowerCase();
+                String matchDest = dest.toLowerCase();
+                boolean destMatch = driverDest.contains(matchDest) || matchDest.contains(driverDest);
+                
+                System.out.println("DEBUG: StationMatch: " + stationMatch + " (Driver Stations: " + driverInfo.getMetroStationsList() + ", Pickup: " + pickup + ")");
+                System.out.println("DEBUG: DestMatch: " + destMatch + " (Driver Dest: " + driverDest + ", Rider Dest: " + matchDest + ")");
+
+                if (stationMatch && destMatch) {
                     System.out.println("DEBUG: Found match for pending request " + match.getMatchId() + " with driver " + driverId);
                     
                     var driverInfoBuilder = com.lastmile.driver.proto.DriverInfo.newBuilder()
-                        .setDriverId(driverInfo.getDriverId()); // Good practice to set ID too
+                        .setDriverId(driverInfo.getDriverId());
                     
                     if (driverInfo.hasCurrentLocation()) {
                         driverInfoBuilder.setCurrentLocation(driverInfo.getCurrentLocation());
                     }
 
-                    int fare = calculateFare(pickup, driverInfoBuilder.build(), token); // Pass token
+                    int fare = calculateFare(pickup, driverInfoBuilder.build(), token);
 
                     match.setDriverId(driverId);
                     match.setFare(fare);
-                    match.setStatus("MATCHED");
+                    match.setStatus("MATCHED"); // This effectively reserves the seat
                     match.setTimestamp(System.currentTimeMillis());
                     matchRepository.save(match);
+                    
+                    // Decrement local seat counter
+                    currentSeats--;
 
-                    notifyDriver(driverId, match.getRiderId(), match.getMatchId(), token); // Pass token
+                    notifyDriver(driverId, match.getRiderId(), match.getMatchId(), token);
                     publishMatchUpdate(match.getRiderId(), match.getMatchId(), "MATCHED", driverId, null);
                     publishDriverMatchRequest(driverId, match.getMatchId(), match.getRiderId(), pickup, dest, fare);
                 }
@@ -463,13 +477,21 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
                     // Relaxed matching: check if one contains the other
                     boolean destMatch = driverDest.equals(riderDest) || driverDest.contains(riderDest) || riderDest.contains(driverDest);
                     
-                    if (destMatch &&
-                        driver.getAvailableSeats() > 0 &&
-                        driver.getMetroStationsList().contains(pickupStation)) {
+                    if (destMatch && driver.getMetroStationsList().contains(pickupStation)) {
                         
-                        if (excludeDriverId == null || !driver.getDriverId().equals(excludeDriverId)) {
-                            System.out.println("DEBUG: >> Match found: " + driver.getDriverId());
-                            return driver;
+                        // Check for PENDING matches for this driver to avoid double booking
+                        long pendingMatches = matchRepository.countByDriverIdAndStatus(driver.getDriverId(), "MATCHED");
+                        int effectiveSeats = driver.getAvailableSeats() - (int) pendingMatches;
+                        
+                        System.out.println("DEBUG: Driver " + driver.getDriverId() + " has " + pendingMatches + " pending matches. Effective seats: " + effectiveSeats);
+
+                        if (effectiveSeats > 0) {
+                            if (excludeDriverId == null || !driver.getDriverId().equals(excludeDriverId)) {
+                                System.out.println("DEBUG: >> Match found: " + driver.getDriverId());
+                                return driver;
+                            }
+                        } else {
+                            System.out.println("DEBUG: >> Driver " + driver.getDriverId() + " skipped due to no effective seats.");
                         }
                     } else {
                          System.out.println("DEBUG: >> Driver " + driver.getDriverId() + " did not match. DestMatch: " + destMatch);
@@ -520,6 +542,34 @@ public class MatchingGrpcService extends MatchingServiceGrpc.MatchingServiceImpl
             );
         } catch (Exception e) {
             System.err.println("Failed to notify driver: " + e.getMessage());
+        }
+    }
+    @org.springframework.scheduling.annotation.Scheduled(fixedRate = 30000) // Check every 30s
+    public void checkMatchTimeouts() {
+        System.out.println("DEBUG: Running checkMatchTimeouts...");
+        long now = System.currentTimeMillis();
+        long timeoutThreshold = 45000; // 45 seconds timeout
+
+        List<Match> matchedRides = matchRepository.findByStatus("MATCHED");
+        for (Match match : matchedRides) {
+            if (now - match.getTimestamp() > timeoutThreshold) {
+                System.out.println("DEBUG: Match " + match.getMatchId() + " timed out. Reverting to PENDING. Driver was: " + match.getDriverId());
+                
+                // Revert to PENDING
+                match.setStatus("PENDING");
+                match.setDriverId(null); // Clear driver so it can be picked up by anyone
+                // Don't reset timestamp completely, or maybe reset it to now to give it fresh priority? 
+                // Let's keep original timestamp or just update it to now so it doesn't look like it's been waiting forever if we sort by time.
+                // Actually, for "PENDING" queue, older might be better. But here we just want it to be valid.
+                
+                matchRepository.save(match);
+                
+                // Notify Rider -> "Searching for new driver..."
+                publishMatchUpdate(match.getRiderId(), match.getMatchId(), "PENDING", null, null);
+                
+                // Ideally cancel the request sent to the driver dashboard too, but the dashboard usually just polls or listens.
+                // We can send a CANCEL/TIMEOUT event to the driver if needed.
+            }
         }
     }
 }

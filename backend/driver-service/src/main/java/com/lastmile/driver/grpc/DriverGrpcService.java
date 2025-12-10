@@ -209,6 +209,26 @@ public class DriverGrpcService extends DriverServiceGrpc.DriverServiceImplBase {
 
         long modifiedCount = mongoTemplate.updateFirst(query, update, Driver.class).getModifiedCount();
 
+        // --------------------------------------------------------------------------
+        // NEW: Publish Driver Available Event so Matching Service can process pending
+        // --------------------------------------------------------------------------
+        if (modifiedCount > 0) {
+            try {
+                // Since this is a grpc call, we might not have the auth token easily available 
+                // unless we extracted it from Context or it was passed.
+                // For internal events, we might not strictly need the token if the listener is internal,
+                // but the listener uses it to call other services.
+                // We'll try to get it from the current context.
+                String token = AuthInterceptor.AUTH_TOKEN_KEY.get();
+                String event = "DRIVER_AVAILABLE," + driverId + "," + (token != null ? token : "");
+                redisTemplate.convertAndSend("driver-events", event);
+                System.out.println("DEBUG: Published DRIVER_AVAILABLE event after trip completion: " + event);
+            } catch (Exception e) {
+                System.err.println("Failed to publish driver availability event: " + e.getMessage());
+            }
+        }
+        // --------------------------------------------------------------------------
+
         CompleteActiveTripResponse response = CompleteActiveTripResponse.newBuilder()
                 .setSuccess(modifiedCount > 0)
                 .setMessage(modifiedCount > 0 ? "Trip completed successfully" : "Trip state changed concurrently")
