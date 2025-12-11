@@ -29,6 +29,7 @@ data:
                           cors:
                             allow_origin_string_match:
                               - exact: "http://localhost:3000"
+                              - exact: "http://lastmile.local"
                             allow_methods: "GET, POST, PUT, DELETE, OPTIONS"
                             allow_headers: "content-type,authorization,x-user-agent,x-grpc-web,x-user-id"
                             expose_headers: "grpc-status,grpc-message"
@@ -386,6 +387,12 @@ spec:
         ports:
         - containerPort: 8080
         - containerPort: 9901
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
         volumeMounts:
         - name: envoy-config-vol
           mountPath: /etc/envoy/envoy.yaml

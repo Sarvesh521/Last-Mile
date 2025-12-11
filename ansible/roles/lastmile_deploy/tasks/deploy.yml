@@ -1,0 +1,69 @@
+---
+# ------------------------------------------------------------------
+# 4. Deployment Application
+# ------------------------------------------------------------------
+- name: Apply Kubernetes Manifests
+  command: kubectl apply -f "{{ ansible_env.HOME }}/k8s-deployment/"
+
+- name: Apply Ingress
+  command: kubectl apply -f "{{ ansible_env.HOME }}/k8s-deployment/ingress.yaml"
+
+- name: Apply HPA (High Availability)
+  command: kubectl apply -f "{{ ansible_env.HOME }}/k8s-deployment/hpa.yaml"
+
+- name: Remove generated secrets file (security best practice)
+  file:
+    path: "{{ ansible_env.HOME }}/k8s-deployment/00-secrets.yaml"
+    state: absent
+
+- name: Restart Deployments (Update Strategy)
+  command: "kubectl rollout restart deployment/{{ item }}"
+  loop:
+    - station-service
+    - user-service
+    - driver-service
+    - rider-service
+    - location-service
+    - matching-service
+    - trip-service
+    - notification-service
+    - lastmile-gateway
+    - frontend
+    # - redis
+    # - mongodb
+
+- name: Wait for Pods and Debug on Failure
+  block:
+    - name: Wait for Deployments to Rollout
+      command: "kubectl rollout status deployment/{{ item }} --timeout=300s"
+      loop:
+        - station-service
+        - user-service
+        - driver-service
+        - rider-service
+        - location-service
+        - matching-service
+        - trip-service
+        - notification-service
+        - lastmile-gateway
+        - frontend
+        - redis
+        - mongodb
+
+  rescue:
+    - name: Get Pod Status (Debug)
+      command: kubectl get pods
+      register: pod_status
+    
+    - name: Print Pod Status
+      debug:
+        var: pod_status.stdout_lines
+
+    - name: Describe Pending/Failed Pods (Debug)
+      shell: kubectl describe pods | grep -A 5 -E "(State:|Reason:|Message:)"
+      register: pod_describe
+      ignore_errors: yes
+
+    - name: Fail the playbook
+      fail:
+        msg: "Deployment failed. See the debug output above for details."

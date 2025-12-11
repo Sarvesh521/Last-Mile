@@ -3,7 +3,7 @@ import * as MatchingServicePb from '../proto/matching_grpc_web_pb.js';
 import * as DriverServicePb from '../proto/driver_grpc_web_pb.js';
 import * as TripServicePb from '../proto/trip_grpc_web_pb.js';
 
-const ENVOY_URL = 'http://localhost:8080'; // Envoy proxy URL
+const ENVOY_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api'; // Envoy proxy URL
 
 // @ts-ignore
 const LocationServiceClient = LocationServicePb.LocationServiceClient || LocationServicePb.default.LocationServiceClient;

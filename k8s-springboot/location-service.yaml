@@ -35,6 +35,12 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 50055
+        readinessProbe:
+          tcpSocket:
+            port: 50055
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
         env:
         - name: REDIS_HOST
           value: "redis"

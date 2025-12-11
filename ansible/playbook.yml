@@ -1,0 +1,6 @@
+---
+- name: Deploy Last-Mile App to Local Minikube
+  hosts: minikube
+  gather_facts: yes # Needed for ansible_env
+  roles:
+    - lastmile_deploy

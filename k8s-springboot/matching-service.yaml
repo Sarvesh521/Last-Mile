@@ -35,6 +35,12 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 50056
+        readinessProbe:
+          tcpSocket:
+            port: 50056
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
         resources:
           requests:
             cpu: "100m"

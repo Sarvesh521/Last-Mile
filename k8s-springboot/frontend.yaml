@@ -36,6 +36,12 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
+        readinessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
         env:
         - name: VITE_API_BASE_URL
           value: "http://lastmile-gateway:8080"
