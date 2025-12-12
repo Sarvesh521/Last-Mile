@@ -23,6 +23,9 @@ pipeline {
         stage('Prepare') {
             steps {
                 script {
+                    echo "Installing Frontend Dependencies..."
+                    sh 'cd frontend && npm install'
+                    
                     echo "Generating Protos..."
                     sh './generate-proto.sh'
                 }
@@ -35,8 +38,8 @@ pipeline {
                     echo "Building and Testing Backend Services..."
                     // Connect to Minikube Docker Daemon and run build script (which runs unit tests)
                     sh '''
-                        eval $(minikube -p minikube docker-env)
-                        cd backend
+                        eval $(minikube -p minikube docker-env) && \
+                        cd backend && \
                         ./build-all.sh
                     '''
                 }
@@ -48,12 +51,10 @@ pipeline {
                 script {
                     echo "Building Frontend and Redis..."
                     sh '''
-                        eval $(minikube -p minikube docker-env)
-                        
-                        echo "Building Redis..."
-                        docker build -t lastmile/redis:latest backend/
-                        
-                        echo "Building Frontend..."
+                        eval $(minikube -p minikube docker-env) && \
+                        echo "Building Redis..." && \
+                        docker build -t lastmile/redis:latest backend/ && \
+                        echo "Building Frontend..." && \
                         docker build -t lastmile/new-frontend:latest -f frontend/Dockerfile .
                     '''
                 }
