@@ -26,6 +26,8 @@ pipeline {
                             sh '''
                                 set -e
                                 export MINIKUBE_IN_STYLE=false
+                                export MINIKUBE_HOME=/home/divyamsareen/.minikube
+                                export KUBECONFIG=/home/divyamsareen/.kube/config
                                 eval $(minikube -p minikube docker-env)
                                 cd backend
                                 ./build-all.sh
@@ -61,6 +63,8 @@ pipeline {
                     sh '''
                         set -e
                         export MINIKUBE_IN_STYLE=false
+                        export MINIKUBE_HOME=/home/divyamsareen/.minikube
+                        export KUBECONFIG=/home/divyamsareen/.kube/config
                         eval $(minikube -p minikube docker-env)
                         
                         echo "Building Redis..."
