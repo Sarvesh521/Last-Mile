@@ -24,6 +24,7 @@ pipeline {
             steps {
                 script {
                     echo "Generating Protos..."
+                    sh 'chmod +x ./generate-proto.sh'
                     sh './generate-proto.sh'
                 }
             }
@@ -37,6 +38,7 @@ pipeline {
                     sh '''
                         eval $(minikube -p minikube docker-env)
                         cd backend
+                        chmod +x ./build-all.sh
                         ./build-all.sh
                     '''
                 }
