@@ -1,16 +1,13 @@
 pipeline {
     agent any
 
-    environment {
-        PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
-    }
-
-    triggers {
-        githubPush()
-    }
-
     options {
         disableConcurrentBuilds()
+        timestamps()
+    }
+
+    environment {
+        PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
     }
 
     stages {
@@ -20,36 +17,50 @@ pipeline {
             }
         }
 
-        stage('Prepare') {
-            steps {
-                script {
-                    echo "Generating Protos..."
-                    sh 'chmod +x ./generate-proto.sh'
-                    sh './generate-proto.sh'
+        stage('Build & Init') {
+            parallel {
+                stage('Backend Build') {
+                    steps {
+                        script {
+                            echo "Building Backend Services..."
+                            sh '''
+                                set -e
+                                export MINIKUBE_IN_STYLE=false
+                                eval $(minikube -p minikube docker-env)
+                                cd backend
+                                ./build-all.sh
+                            '''
+                        }
+                    }
+                }
+
+                stage('Frontend Init') {
+                    steps {
+                        script {
+                            echo "Generating Protos & Installing Dependencies..."
+                            // Run as root inside container to install tools, but chown back to host user at the end
+                            sh '''
+                                docker run --rm \
+                                  -v $(pwd):/workspace \
+                                  -w /workspace \
+                                  -e HOST_UID=$(id -u) \
+                                  -e HOST_GID=$(id -g) \
+                                  node:18 \
+                                  bash -c "apt-get update && apt-get install -y protobuf-compiler && npm install -g grpc-tools && cd frontend && npm install && cd .. && ./generate-proto.sh && chown -R \$(id -u):\$(id -g) ."
+                            '''
+                        }
+                    }
                 }
             }
         }
 
-        stage('Build & Test (Backend)') {
+        stage('Package Frontend') {
             steps {
                 script {
-                    echo "Building and Testing Backend Services..."
-                    // Connect to Minikube Docker Daemon and run build script (which runs unit tests)
+                    echo "Building Frontend & Redis Images..."
                     sh '''
-                        eval $(minikube -p minikube docker-env)
-                        cd backend
-                        chmod +x ./build-all.sh
-                        ./build-all.sh
-                    '''
-                }
-            }
-        }
-
-        stage('Build Frontend & Redis') {
-            steps {
-                script {
-                    echo "Building Frontend and Redis..."
-                    sh '''
+                        set -e
+                        export MINIKUBE_IN_STYLE=false
                         eval $(minikube -p minikube docker-env)
                         
                         echo "Building Redis..."
@@ -65,9 +76,7 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    echo "Deploying to Kubernetes via Ansible..."
-                    // Ansible runs configuration and applies manifests
-                    // We expect Ansible to return success (0) or failure (nonzero)
+                    echo "Deploying via Ansible..."
                     sh 'ansible-playbook -i ansible/inventory/hosts.ini ansible/playbook.yml'
                 }
             }
