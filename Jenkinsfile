@@ -40,7 +40,7 @@ pipeline {
                             stage("Build ${name}") {
                                 sh """
                                     eval \$(minikube -p minikube docker-env)
-                                    docker build -t lastmile/${name}:latest -f backend/${dockerfile} .
+                                    docker build -t lastmile/${name}:latest -f backend/${dockerfile} backend
                                 """
                             }
                         }
