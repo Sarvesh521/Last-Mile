@@ -15,9 +15,7 @@ pipeline {
 
     stages {
         stage('Checkout') {
-            steps {
-                git branch: 'main', url: 'https://github.com/DeathlyMade/Last-Mile.git'
-            }
+            checkout scm
         }
 
         stage('Prepare') {
