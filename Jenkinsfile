@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     environment {
+        // PATH setup: Includes /opt/homebrew/bin (Apple Silicon) and /usr/local/bin (Intel Mac/Linux)
         PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
     }
 
@@ -30,34 +31,53 @@ pipeline {
             }
         }
 
-        stage('Build & Test (Backend)') {
+        stage('Build Parallel') {
             steps {
                 script {
-                    echo "Building and Testing Backend Services..."
-                    // Connect to Minikube Docker Daemon and run build script (which runs unit tests)
-                    sh '''
-                        eval $(minikube -p minikube docker-env)
-                        cd backend
-                        chmod +x ./build-all.sh
-                        ./build-all.sh
-                    '''
-                }
-            }
-        }
+                    // Define map of parallel builds
+                    def builds = [:]
 
-        stage('Build Frontend & Redis') {
-            steps {
-                script {
-                    echo "Building Frontend and Redis..."
-                    sh '''
-                        eval $(minikube -p minikube docker-env)
-                        
-                        echo "Building Redis..."
-                        docker build -t lastmile/redis:latest backend/
-                        
-                        echo "Building Frontend..."
-                        docker build -t lastmile/new-frontend:latest -f frontend/Dockerfile .
-                    '''
+                    // Helper to create build step
+                    def createBuild = { name, dockerfile ->
+                        return {
+                            stage("Build ${name}") {
+                                sh """
+                                    eval \$(minikube -p minikube docker-env)
+                                    docker build -t lastmile/${name}:latest -f backend/${dockerfile} .
+                                """
+                            }
+                        }
+                    }
+
+                    builds['Station'] = createBuild('station-service', 'Dockerfile.station')
+                    builds['User'] = createBuild('user-service', 'Dockerfile.user')
+                    builds['Driver'] = createBuild('driver-service', 'Dockerfile.driver')
+                    builds['Rider'] = createBuild('rider-service', 'Dockerfile.rider')
+                    builds['Location'] = createBuild('location-service', 'Dockerfile.location')
+                    builds['Matching'] = createBuild('matching-service', 'Dockerfile.matching')
+                    builds['Trip'] = createBuild('trip-service', 'Dockerfile.trip')
+                    builds['Notification'] = createBuild('notification-service', 'Dockerfile.notification')
+                    
+                    // Frontend and Redis can also run in parallel
+                    builds['Redis'] = {
+                        stage('Build Redis') {
+                             sh """
+                                eval \$(minikube -p minikube docker-env)
+                                docker build -t lastmile/redis:latest backend/
+                             """
+                        }
+                    }
+                    
+                    builds['Frontend'] = {
+                        stage('Build Frontend') {
+                             sh """
+                                eval \$(minikube -p minikube docker-env)
+                                docker build -t lastmile/new-frontend:latest -f frontend/Dockerfile .
+                             """
+                        }
+                    }
+
+                    parallel builds
                 }
             }
         }
@@ -66,9 +86,26 @@ pipeline {
             steps {
                 script {
                     echo "Deploying to Kubernetes via Ansible..."
-                    // Ansible runs configuration and applies manifests
-                    // We expect Ansible to return success (0) or failure (nonzero)
                     sh 'ansible-playbook -i ansible/inventory/hosts.ini ansible/playbook.yml'
+                }
+            }
+        }
+
+        stage('Port Forward Services') {
+            steps {
+                script {
+                    echo "Setting up port forwarding..."
+                    withEnv(['JENKINS_NODE_COOKIE=dontKillMe', 'BUILD_ID=dontKillMe']) {
+                        // Kill existing port-forwards to avoid conflicts
+                        sh "pkill -f 'kubectl.*port-forward' || true"
+
+                        // Start new port-forwards (Gateway & Frontend)
+                        // Note: Using & to run in background, nohup ensures they survive pipeline exit
+                        sh "nohup minikube kubectl -- port-forward svc/lastmile-gateway 8080:8080 --address 0.0.0.0 > /dev/null 2>&1 &"
+                        sh "nohup minikube kubectl -- port-forward svc/frontend 3000:3000 --address 0.0.0.0 > /dev/null 2>&1 &"
+                        
+                        echo "Port forwarding started: Gateway (8080), Frontend (3000)"
+                    }
                 }
             }
         }
@@ -78,7 +115,7 @@ pipeline {
         success {
             mail to: 'nathanmathewv@gmail.com',
                  subject: "Pipeline Success: ${currentBuild.fullDisplayName}",
-                 body: "Build, Test, and Deployment succeeded!\n\nCheck console output."
+                 body: "Build (Parallel) + Deploy + Port Forwarding succeeded!\n\nCheck console output."
         }
         failure {
             mail to: 'nathanmathewv@gmail.com',
