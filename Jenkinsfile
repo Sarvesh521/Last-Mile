@@ -29,7 +29,7 @@ pipeline {
                           -v $(pwd):/workspace \
                           -w /workspace \
                           node:18 \
-                          sh -c "cd frontend && npm install && cd .. && ./generate-proto.sh"
+                          bash -c "apt-get update && apt-get install -y protobuf-compiler && cd frontend && npm install && cd .. && ./generate-proto.sh"
                     '''
                 }
             }
