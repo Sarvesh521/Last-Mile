@@ -3,7 +3,7 @@ WORKDIR /app
 COPY ./proto/ ./proto/
 COPY ./user-service/pom.xml .
 COPY ./user-service/src ./src
-RUN mvn clean package -DskipTests
+RUN mvn clean package 
 
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app

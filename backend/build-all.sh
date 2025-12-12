@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 docker build -f Dockerfile.station -t lastmile/station-service:latest .
 docker build -f Dockerfile.user -t lastmile/user-service:latest .
 docker build -f Dockerfile.driver -t lastmile/driver-service:latest .
