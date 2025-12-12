@@ -7,7 +7,8 @@ WORKDIR /app
 COPY frontend/package*.json ./
 
 # Install dependencies
-RUN npm install
+# Install dependencies (ignoring lockfile to resolve platform mismatch)
+RUN rm -f package-lock.json && npm install
 
 # Copy source code (including generated protos in src/proto)
 # NOTE: You must run ./generate-proto.sh locally before building this image
